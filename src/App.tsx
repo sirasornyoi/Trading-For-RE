@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { 
   Asset, 
   Candle, 
@@ -12,6 +12,7 @@ import {
   getStoredCandles, 
   setStoredCandles,
   detectCandleTimeframe,
+  aggregateDailyToWeekly,
 } from './services/marketData';
 import { soundService } from './services/sound';
 import { TopNav } from './components/TopNav';
@@ -68,6 +69,7 @@ export default function App() {
   const [isLiveWs, setIsLiveWs] = useState<boolean>(false);
   const [csvUploadError, setCsvUploadError] = useState<string | null>(null);
   const [csvUploadSuccess, setCsvUploadSuccess] = useState<string | null>(null);
+  const [isWeeklyView, setIsWeeklyView] = useState<boolean>(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -87,6 +89,15 @@ export default function App() {
 
   const currentAsset = assets.find(a => a.symbol === selectedSymbol) || assets[0];
   const isBinanceAsset = selectedSymbol === 'BTC/USDT' || selectedSymbol === 'ETH/USDT';
+
+  const isCsvDaily = !isBinanceAsset && !!(currentAsset.csvTimeframe?.toLowerCase().includes('d') || currentAsset.csvTimeframe?.toLowerCase().includes('day') || currentAsset.csvTimeframe === '1D' || currentAsset.csvTimeframe === '1d');
+
+  const displayedCandles = useMemo(() => {
+    if (isCsvDaily && isWeeklyView) {
+      return aggregateDailyToWeekly(candles);
+    }
+    return candles;
+  }, [candles, isCsvDaily, isWeeklyView]);
 
   // Save alerts to localStorage
   useEffect(() => {
@@ -534,7 +545,7 @@ export default function App() {
             <div className="lg:col-span-9 h-[580px] lg:h-auto min-h-[520px]">
               {candles.length > 0 ? (
                 <TradingChart
-                  candles={candles}
+                  candles={displayedCandles}
                   symbol={selectedSymbol}
                   decimals={currentAsset.decimals}
                   timeframe={timeframe}
@@ -548,6 +559,9 @@ export default function App() {
                   }}
                   isLive={isLiveWs}
                   isTimeframeDisabled={!isBinanceAsset}
+                  isWeeklyView={isWeeklyView}
+                  onToggleWeeklyView={() => setIsWeeklyView(v => !v)}
+                  canToggleWeeklyView={isCsvDaily}
                 />
               ) : (
                 <div className="flex flex-col items-center justify-center h-full min-h-[500px] bg-slate-900 border border-slate-800 rounded-xl p-8 text-center">

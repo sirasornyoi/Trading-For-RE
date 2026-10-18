@@ -188,9 +188,31 @@ export const RiskCalculator: React.FC<RiskCalculatorProps> = ({
   const t2Price = parseFloat(tranche2Price) || entryNum;
   const t3Price = parseFloat(tranche3Price) || entryNum;
 
+  // Validation: tranche entry price must not be on the wrong side of stop loss
+  let trancheSlError: string | null = null;
+  if (isValidSetup) {
+    const tranchesToCheck = [
+      { name: 'ไม้ 1', price: t1Price },
+      { name: 'ไม้ 2', price: t2Price },
+      ...(trancheCount === 3 ? [{ name: 'ไม้ 3', price: t3Price }] : []),
+    ];
+
+    for (const t of tranchesToCheck) {
+      if (t.price > 0 && slNum > 0) {
+        if (side === 'buy' && t.price <= slNum) {
+          trancheSlError = `ข้อผิดพลาด: ราคาเข้า ${t.name} (${t.price}) ต้องอยู่สูงกว่าจุดตัดขาดทุน (SL: ${slNum})`;
+          break;
+        } else if (side === 'sell' && t.price >= slNum) {
+          trancheSlError = `ข้อผิดพลาด: ราคาเข้า ${t.name} (${t.price}) ต้องอยู่ต่ำกว่าจุดตัดขาดทุน (SL: ${slNum})`;
+          break;
+        }
+      }
+    }
+  }
+
   // Tranche sizing: wholeContracts must be at least trancheCount
-  const canAllocateTranches = isTranchePctValid && isValidSetup && wholeContracts >= trancheCount;
-  const isContractsTooSmallForTranches = isTranchePctValid && isValidSetup && wholeContracts < trancheCount;
+  const canAllocateTranches = isTranchePctValid && isValidSetup && wholeContracts >= trancheCount && !trancheSlError;
+  const isContractsTooSmallForTranches = isTranchePctValid && isValidSetup && wholeContracts < trancheCount && !trancheSlError;
 
   // Largest remainder allocation so sum of tranches equals wholeContracts exactly
   const { c1, c2, c3 } = useMemo(() => {
@@ -598,6 +620,11 @@ export const RiskCalculator: React.FC<RiskCalculatorProps> = ({
                 <span>
                   ข้อผิดพลาด: สัดส่วนเปอร์เซ็นต์รวมต้องเท่ากับ 100% พอดี (ปัจจุบันรวมได้: {totalTranchePct}%)
                 </span>
+              </div>
+            ) : trancheSlError ? (
+              <div className="p-3 bg-rose-500/15 border border-rose-500/40 rounded-xl text-xs text-rose-300 flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                <span>{trancheSlError}</span>
               </div>
             ) : isContractsTooSmallForTranches ? (
               <div className="p-3 bg-rose-500/15 border border-rose-500/40 rounded-xl text-xs text-rose-300 flex items-center gap-2">

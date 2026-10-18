@@ -28,13 +28,15 @@ export interface Candle {
   volume: number;
 }
 
-export type Timeframe = '1m' | '5m' | '15m' | '1h' | '4h' | '1d';
+export type Timeframe = '1m' | '5m' | '15m' | '1h' | '4h' | '1d' | '1w';
 
 export type ChartType = 'candles' | 'line';
 
 export interface IndicatorSettings {
   showEMA20: boolean;
   showEMA50: boolean;
+  showEMA100: boolean;
+  showEMA200: boolean;
   showBollinger: boolean;
   showRSI: boolean;
   showMACD: boolean;

@@ -12,7 +12,13 @@ import {
   EyeOff, 
   TrendingUp, 
   Activity,
-  Layers
+  Layers,
+  Compass,
+  X,
+  AlertTriangle,
+  ShieldCheck,
+  Calendar,
+  Sparkles
 } from 'lucide-react';
 
 interface TradingChartProps {
@@ -27,6 +33,9 @@ interface TradingChartProps {
   onOpenAlertModal: () => void;
   isLive: boolean;
   isTimeframeDisabled?: boolean;
+  isWeeklyView?: boolean;
+  onToggleWeeklyView?: () => void;
+  canToggleWeeklyView?: boolean;
 }
 
 export const TradingChart: React.FC<TradingChartProps> = ({
@@ -41,6 +50,9 @@ export const TradingChart: React.FC<TradingChartProps> = ({
   onOpenAlertModal,
   isLive,
   isTimeframeDisabled = false,
+  isWeeklyView = false,
+  onToggleWeeklyView,
+  canToggleWeeklyView = false,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const mainCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -51,12 +63,20 @@ export const TradingChart: React.FC<TradingChartProps> = ({
   const [indicators, setIndicators] = useState<IndicatorSettings>({
     showEMA20: true,
     showEMA50: false,
+    showEMA100: false,
+    showEMA200: false,
     showBollinger: false,
     showRSI: true,
     showMACD: false,
     showVolume: true,
   });
   const [showIndicatorsMenu, setShowIndicatorsMenu] = useState(false);
+  const [showBullishEngulfing, setShowBullishEngulfing] = useState<boolean>(true);
+
+  // Support & Resistance Tester state
+  const [srLevel, setSrLevel] = useState<number | null>(null);
+  const [isDrawingSr, setIsDrawingSr] = useState<boolean>(false);
+  const [showSrPanel, setShowSrPanel] = useState<boolean>(false);
 
   // Viewport zoom & pan offset
   const [visibleCount, setVisibleCount] = useState<number>(60);
@@ -100,6 +120,8 @@ export const TradingChart: React.FC<TradingChartProps> = ({
     return {
       ema20: indicators.showEMA20 ? calculateEMA(closes, 20) : null,
       ema50: indicators.showEMA50 ? calculateEMA(closes, 50) : null,
+      ema100: indicators.showEMA100 ? calculateEMA(closes, 100) : null,
+      ema200: indicators.showEMA200 ? calculateEMA(closes, 200) : null,
       bb: indicators.showBollinger ? calculateBollingerBands(closes, 20, 2) : null,
       rsi: indicators.showRSI ? calculateRSI(closes, 14) : null,
       macd: indicators.showMACD ? calculateMACD(closes) : null,
@@ -198,7 +220,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
       const candle = visibleCandles[i];
       if (candle) {
         const d = new Date(candle.time * 1000);
-        const timeStr = timeframe === '1d' 
+        const timeStr = timeframe === '1d' || timeframe === '1w' || isWeeklyView
           ? `${d.getMonth() + 1}/${d.getDate()}`
           : `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
         ctx.fillStyle = '#64748b';
@@ -209,19 +231,33 @@ export const TradingChart: React.FC<TradingChartProps> = ({
     }
 
     // Volume bars (at bottom of chart)
+    const startGlobalIdx = candles.length - panOffset - visibleCount;
     if (indicators.showVolume && maxVolume > 0) {
       const volumeAreaHeight = chartHeight * 0.2;
       visibleCandles.forEach((c, idx) => {
         const x = idx * slotWidth + (slotWidth - candleWidth) / 2;
         const vHeight = (c.volume / maxVolume) * volumeAreaHeight;
         const isUp = c.close >= c.open;
-        ctx.fillStyle = isUp ? 'rgba(16, 185, 129, 0.18)' : 'rgba(239, 68, 68, 0.18)';
-        ctx.fillRect(x, chartHeight - vHeight, candleWidth, vHeight);
+
+        // Requirement 3: Highlight volume bar when volume is higher than previous candle's volume
+        const globalIdx = startGlobalIdx + idx;
+        const prevCandle = globalIdx > 0 ? candles[globalIdx - 1] : (idx > 0 ? visibleCandles[idx - 1] : null);
+        const isHigherVol = prevCandle ? c.volume > prevCandle.volume : false;
+
+        if (isHigherVol) {
+          ctx.fillStyle = isUp ? 'rgba(16, 185, 129, 0.7)' : 'rgba(239, 68, 68, 0.7)';
+          ctx.fillRect(x, chartHeight - vHeight, candleWidth, vHeight);
+          ctx.strokeStyle = isUp ? '#10b981' : '#ef4444';
+          ctx.lineWidth = 1 * dpr;
+          ctx.strokeRect(x, chartHeight - vHeight, candleWidth, vHeight);
+        } else {
+          ctx.fillStyle = isUp ? 'rgba(16, 185, 129, 0.2)' : 'rgba(239, 68, 68, 0.2)';
+          ctx.fillRect(x, chartHeight - vHeight, candleWidth, vHeight);
+        }
       });
     }
 
     // Bollinger Bands Cloud
-    const startGlobalIdx = candles.length - panOffset - visibleCount;
     if (indicators.showBollinger && indicatorData?.bb) {
       const { upper, middle, lower } = indicatorData.bb;
       
@@ -310,6 +346,8 @@ export const TradingChart: React.FC<TradingChartProps> = ({
 
     drawIndicatorLine(indicatorData?.ema20 ?? null, '#06b6d4', 1.8); // EMA 20 Cyan
     drawIndicatorLine(indicatorData?.ema50 ?? null, '#f59e0b', 1.8); // EMA 50 Amber
+    drawIndicatorLine(indicatorData?.ema100 ?? null, '#818cf8', 1.8); // EMA 100 Indigo
+    drawIndicatorLine(indicatorData?.ema200 ?? null, '#f43f5e', 2.0); // EMA 200 Rose
 
     // Draw Main Price Series: Candles or Line
     if (chartType === 'candles') {
@@ -335,6 +373,43 @@ export const TradingChart: React.FC<TradingChartProps> = ({
 
         ctx.fillStyle = candleColor;
         ctx.fillRect(x, bodyTop, candleWidth, bodyHeight);
+
+        // Requirement 4: Bullish engulfing detector
+        const globalIdx = startGlobalIdx + idx;
+        if (showBullishEngulfing && globalIdx > 0) {
+          const prev = candles[globalIdx - 1];
+          const isPrevRed = prev.close < prev.open;
+          const isCurrGreen = c.close > c.open;
+          const isEngulfingBody = isPrevRed && isCurrGreen && c.close > prev.open && c.open <= (prev.close + Math.abs(prev.open - prev.close) * 0.2);
+
+          if (isEngulfingBody) {
+            const isConfirmed = c.close > prev.high && c.volume > prev.volume;
+            const badgeY = priceToY(c.low) + 6 * dpr;
+
+            ctx.save();
+            ctx.font = `bold ${8.5 * dpr}px 'Plus Jakarta Sans', sans-serif`;
+            const text = isConfirmed ? 'Buyer จริง' : 'อาจเป็น short covering';
+            const textWidth = ctx.measureText(text).width;
+            const badgeW = textWidth + 8 * dpr;
+            const badgeH = 14 * dpr;
+            const badgeX = centerX - badgeW / 2;
+
+            ctx.fillStyle = isConfirmed ? 'rgba(16, 185, 129, 0.95)' : 'rgba(245, 158, 11, 0.95)';
+            if (ctx.roundRect) {
+              ctx.beginPath();
+              ctx.roundRect(badgeX, badgeY, badgeW, badgeH, 3 * dpr);
+              ctx.fill();
+            } else {
+              ctx.fillRect(badgeX, badgeY, badgeW, badgeH);
+            }
+
+            ctx.fillStyle = isConfirmed ? '#022c22' : '#451a03';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(text, centerX, badgeY + badgeH / 2);
+            ctx.restore();
+          }
+        }
       });
     } else {
       // Area / Line Chart mode
@@ -385,6 +460,33 @@ export const TradingChart: React.FC<TradingChartProps> = ({
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(currentPrice.toFixed(decimals), chartWidth + (rightPadding - 4 * dpr) / 2 + 2 * dpr, currentPriceY);
+    }
+
+    // Requirement 5: Support & Resistance horizontal level line
+    if (srLevel !== null) {
+      const srY = priceToY(srLevel);
+      if (srY >= 0 && srY <= chartHeight) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.strokeStyle = '#06b6d4';
+        ctx.lineWidth = 1.8 * dpr;
+        ctx.setLineDash([6 * dpr, 4 * dpr]);
+        ctx.moveTo(0, srY);
+        ctx.lineTo(chartWidth, srY);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Tag on right axis
+        const tagHeight = 18 * dpr;
+        ctx.fillStyle = '#06b6d4';
+        ctx.fillRect(chartWidth + 2 * dpr, srY - tagHeight / 2, rightPadding - 4 * dpr, tagHeight);
+        ctx.fillStyle = '#083344';
+        ctx.font = `bold ${9 * dpr}px 'JetBrains Mono', monospace`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(`S/R ${srLevel.toFixed(decimals)}`, chartWidth + (rightPadding - 4 * dpr) / 2 + 2 * dpr, srY);
+        ctx.restore();
+      }
     }
 
     // ACTIVE PRICE ALERTS VISUAL LINES ON CHART!
@@ -470,7 +572,10 @@ export const TradingChart: React.FC<TradingChartProps> = ({
     timeframe, 
     panOffset, 
     visibleCount, 
-    candles.length
+    candles.length,
+    showBullishEngulfing,
+    srLevel,
+    isWeeklyView
   ]);
 
   // Sub-Indicator Canvas (RSI or MACD)

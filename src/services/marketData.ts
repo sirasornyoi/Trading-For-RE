@@ -100,19 +100,69 @@ export const TIMEFRAME_SECONDS: Record<Timeframe, number> = {
   '1h': 3600,
   '4h': 14400,
   '1d': 86400,
+  '1w': 604800,
 };
+
+// Aggregate daily candles into weekly candles (week starts Monday)
+export function aggregateDailyToWeekly(dailyCandles: Candle[]): Candle[] {
+  if (!dailyCandles || dailyCandles.length === 0) return [];
+  const sorted = [...dailyCandles].sort((a, b) => a.time - b.time);
+  const weekMap = new Map<number, Candle[]>();
+
+  for (const c of sorted) {
+    const d = new Date(c.time * 1000);
+    const day = d.getUTCDay(); // 0: Sun, 1: Mon, ..., 6: Sat
+    const diffToMonday = (day + 6) % 7; // Mon: 0, Tue: 1, ..., Sun: 6
+    const monday = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - diffToMonday, 0, 0, 0));
+    const mondayTime = Math.floor(monday.getTime() / 1000);
+
+    const list = weekMap.get(mondayTime) || [];
+    list.push(c);
+    weekMap.set(mondayTime, list);
+  }
+
+  const weeklyCandles: Candle[] = [];
+  for (const [mondayTime, candles] of weekMap.entries()) {
+    if (candles.length === 0) continue;
+    const open = candles[0].open;
+    const close = candles[candles.length - 1].close;
+    let high = -Infinity;
+    let low = Infinity;
+    let volume = 0;
+    for (const c of candles) {
+      if (c.high > high) high = c.high;
+      if (c.low < low) low = c.low;
+      volume += c.volume || 0;
+    }
+    weeklyCandles.push({
+      time: mondayTime,
+      open,
+      high,
+      low,
+      close,
+      volume,
+    });
+  }
+
+  return weeklyCandles.sort((a, b) => a.time - b.time);
+}
 
 // Fetch real historical klines from Binance REST API
 export async function fetchBinanceKlines(symbol: string, timeframe: Timeframe): Promise<Candle[]> {
   const cleanSymbol = symbol.replace('/', '').toUpperCase();
-  const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${cleanSymbol}&interval=${timeframe}&limit=100`);
+  // Weekly timeframe is built by aggregating daily candles (week starts Monday)
+  const isWeekly = timeframe === '1w';
+  const apiInterval = isWeekly ? '1d' : timeframe;
+  const limit = isWeekly ? 500 : 100;
+
+  const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${cleanSymbol}&interval=${apiInterval}&limit=${limit}`);
   if (!res.ok) {
     throw new Error(`Failed to fetch Binance klines: ${res.statusText}`);
   }
   const data = await res.json();
   if (!Array.isArray(data)) return [];
 
-  return data.map((item: (number | string)[]) => ({
+  const rawCandles: Candle[] = data.map((item: (number | string)[]) => ({
     time: Math.floor(Number(item[0]) / 1000),
     open: parseFloat(item[1] as string),
     high: parseFloat(item[2] as string),
@@ -120,6 +170,11 @@ export async function fetchBinanceKlines(symbol: string, timeframe: Timeframe): 
     close: parseFloat(item[4] as string),
     volume: parseFloat(item[5] as string) || 0,
   }));
+
+  if (isWeekly) {
+    return aggregateDailyToWeekly(rawCandles);
+  }
+  return rawCandles;
 }
 
 // Parse TradingView CSV export (case-insensitive column matching: time, open, high, low, close, volume)
