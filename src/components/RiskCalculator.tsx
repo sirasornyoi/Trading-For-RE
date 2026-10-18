@@ -15,12 +15,13 @@ export const RiskCalculator: React.FC<RiskCalculatorProps> = ({
   const [side, setSide] = useState<'buy' | 'sell'>('buy');
   const [accountBalance, setAccountBalance] = useState<number>(50000);
   const [riskPercent, setRiskPercent] = useState<number>(2); // 2% risk rule
-  const [entryPrice, setEntryPrice] = useState<number>(currentAsset.price);
+  const safePrice = currentAsset.price ?? 0;
+  const [entryPrice, setEntryPrice] = useState<number>(safePrice);
   const [stopLossPrice, setStopLossPrice] = useState<number>(
-    Number((currentAsset.price * 0.98).toFixed(currentAsset.decimals))
+    Number((safePrice * 0.98).toFixed(currentAsset.decimals))
   );
   const [takeProfitPrice, setTakeProfitPrice] = useState<number>(
-    Number((currentAsset.price * 1.04).toFixed(currentAsset.decimals))
+    Number((safePrice * 1.04).toFixed(currentAsset.decimals))
   );
   const [leverage, setLeverage] = useState<number>(10);
 
@@ -73,16 +74,17 @@ export const RiskCalculator: React.FC<RiskCalculatorProps> = ({
                 setSelectedSymbol(s);
                 const found = assets.find(a => a.symbol === s);
                 if (found) {
-                  setEntryPrice(found.price);
-                  setStopLossPrice(Number((found.price * 0.98).toFixed(found.decimals)));
-                  setTakeProfitPrice(Number((found.price * 1.04).toFixed(found.decimals)));
+                  const fp = found.price ?? 0;
+                  setEntryPrice(fp);
+                  setStopLossPrice(Number((fp * 0.98).toFixed(found.decimals)));
+                  setTakeProfitPrice(Number((fp * 1.04).toFixed(found.decimals)));
                 }
               }}
               className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-xs font-medium focus:outline-none focus:border-amber-500"
             >
               {assets.map(a => (
                 <option key={a.symbol} value={a.symbol}>
-                  {a.icon} {a.symbol} ({a.thaiName}) - ${a.price.toFixed(a.decimals)}
+                  {a.icon} {a.symbol} ({a.thaiName}) - {a.price !== undefined ? `$${a.price.toFixed(a.decimals)}` : 'ยังไม่มีข้อมูล'}
                 </option>
               ))}
             </select>

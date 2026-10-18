@@ -103,14 +103,16 @@ export const AlertDrawer: React.FC<AlertDrawerProps> = ({
             ) : (
               activeAlerts.map(alert => {
                 const asset = getAsset(alert.symbol);
-                const currentPrice = asset ? asset.price : alert.initialPrice;
-                const priceDiff = alert.targetPrice - currentPrice;
-                const percentDiff = (priceDiff / currentPrice) * 100;
+                const currentPrice = asset?.price ?? alert.initialPrice ?? 0;
+                const hasPrice = currentPrice > 0;
+                const priceDiff = hasPrice ? alert.targetPrice - currentPrice : 0;
+                const percentDiff = hasPrice ? (priceDiff / currentPrice) * 100 : 0;
                 const isAbove = alert.condition === 'gte';
 
                 // Closeness calculation (0% to 100%)
-                const totalSpan = Math.abs(alert.targetPrice - alert.initialPrice);
-                const currentCovered = Math.abs(currentPrice - alert.initialPrice);
+                const initPrice = alert.initialPrice ?? currentPrice;
+                const totalSpan = Math.abs(alert.targetPrice - initPrice);
+                const currentCovered = Math.abs(currentPrice - initPrice);
                 const progressPct = totalSpan > 0 ? Math.min(100, Math.max(0, (currentCovered / totalSpan) * 100)) : 50;
 
                 return (

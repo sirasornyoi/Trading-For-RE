@@ -5,14 +5,16 @@ export interface Asset {
   name: string;
   thaiName: string;
   category: AssetCategory;
-  price: number;
-  change24h: number;
-  high24h: number;
-  low24h: number;
-  volume24h: string;
   decimals: number;
   unit: string;
   icon: string;
+  price?: number;
+  change24h?: number;
+  high24h?: number;
+  low24h?: number;
+  volume24h?: string;
+  lastCandleDate?: string;
+  dataSource?: 'Binance' | 'CSV Upload' | null;
 }
 
 export interface Candle {
@@ -42,49 +44,11 @@ export interface PriceAlert {
   symbol: string;
   targetPrice: number;
   condition: 'gte' | 'lte'; // gte: price >= target, lte: price <= target
-  initialPrice: number;
+  initialPrice?: number;
   createdAt: number;
   triggeredAt?: number;
   status: 'active' | 'triggered' | 'disabled';
   note?: string;
   soundEnabled: boolean;
   recurring: boolean;
-}
-
-export interface OrderBookEntry {
-  price: number;
-  amount: number;
-  total: number;
-  percent: number;
-}
-
-export interface TradeTick {
-  id: string;
-  price: number;
-  amount: number;
-  time: number;
-  side: 'buy' | 'sell';
-}
-
-export interface Position {
-  id: string;
-  symbol: string;
-  side: 'buy' | 'sell';
-  entryPrice: number;
-  amount: number;
-  margin: number;
-  leverage: number;
-  takeProfit?: number;
-  stopLoss?: number;
-  openedAt: number;
-  pnl: number;
-  pnlPercent: number;
-}
-
-export interface PaperAccount {
-  balance: number;
-  equity: number;
-  marginUsed: number;
-  freeMargin: number;
-  realizedPnl: number;
 }

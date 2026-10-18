@@ -2,81 +2,79 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   Asset, 
   Candle, 
-  PaperAccount, 
-  Position, 
   PriceAlert, 
-  Timeframe, 
-  TradeTick 
+  Timeframe 
 } from './types/trading';
 import { 
   INITIAL_ASSETS, 
-  generateCandleHistory, 
-  TIMEFRAME_SECONDS 
+  fetchBinanceKlines, 
+  parseTradingViewCSV, 
+  getStoredCandles, 
+  setStoredCandles 
 } from './services/marketData';
 import { soundService } from './services/sound';
 import { TopNav } from './components/TopNav';
 import { AssetSelector } from './components/AssetSelector';
 import { TradingChart } from './components/TradingChart';
-import { OrderBook } from './components/OrderBook';
-import { TradeExecution } from './components/TradeExecution';
-import { PositionsPanel } from './components/PositionsPanel';
 import { AlertModal } from './components/AlertModal';
 import { AlertDrawer } from './components/AlertDrawer';
 import { AlertNotificationToast } from './components/AlertNotificationToast';
 import { RiskCalculator } from './components/RiskCalculator';
+import { UploadCloud, FileSpreadsheet, Trash2, CheckCircle, AlertCircle, Info } from 'lucide-react';
 
-const ALERTS_STORAGE_KEY = 'apextrade_alerts_v1';
-const ACCOUNT_STORAGE_KEY = 'apextrade_account_v1';
-const POSITIONS_STORAGE_KEY = 'apextrade_positions_v1';
+const ALERTS_STORAGE_KEY = 'apextrade_alerts_v2';
+
+function formatCandleDate(timestampSec: number): string {
+  const d = new Date(timestampSec * 1000);
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  const hh = String(d.getHours()).padStart(2, '0');
+  const min = String(d.getMinutes()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd} ${hh}:${min}`;
+}
 
 export default function App() {
-  // Navigation View
-  const [activeView, setActiveView] = useState<'trade' | 'alerts' | 'portfolio' | 'calculator'>('trade');
+  const [activeView, setActiveView] = useState<'trade' | 'alerts' | 'calculator'>('trade');
 
-  // Market & Asset State
-  const [assets, setAssets] = useState<Asset[]>(INITIAL_ASSETS);
+  // Master asset list without any hardcoded/simulated prices
+  const [assets, setAssets] = useState<Asset[]>(() => {
+    return INITIAL_ASSETS.map(asset => {
+      // Check if CSV data is stored locally for this asset
+      const stored = getStoredCandles(asset.symbol);
+      if (stored && stored.length > 0) {
+        const last = stored[stored.length - 1];
+        const prev = stored.length > 1 ? stored[stored.length - 2] : last;
+        const change = prev.close > 0 ? ((last.close - prev.close) / prev.close) * 100 : 0;
+        return {
+          ...asset,
+          price: last.close,
+          change24h: Number(change.toFixed(2)),
+          lastCandleDate: formatCandleDate(last.time),
+          dataSource: 'CSV Upload',
+        };
+      }
+      return asset;
+    });
+  });
+
   const [selectedSymbol, setSelectedSymbol] = useState<string>('BTC/USDT');
   const [timeframe, setTimeframe] = useState<Timeframe>('15m');
   const [candles, setCandles] = useState<Candle[]>([]);
-  const [recentTrades, setRecentTrades] = useState<TradeTick[]>([]);
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
   const [isLiveWs, setIsLiveWs] = useState<boolean>(false);
+  const [csvUploadError, setCsvUploadError] = useState<string | null>(null);
+  const [csvUploadSuccess, setCsvUploadSuccess] = useState<string | null>(null);
 
-  // Price Alerts State
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Price Alerts (delete default sample alerts; only load user saved alerts or empty)
   const [alerts, setAlerts] = useState<PriceAlert[]>(() => {
     try {
       const saved = localStorage.getItem(ALERTS_STORAGE_KEY);
       if (saved) return JSON.parse(saved);
-    } catch {
-      // fallback
-    }
-    // Default sample alert for demonstration: BTC and Gold alerts
-    return [
-      {
-        id: 'alert-btc-default',
-        symbol: 'BTC/USDT',
-        targetPrice: 68500,
-        condition: 'gte',
-        initialPrice: 67845.50,
-        createdAt: Date.now() - 3600000,
-        status: 'active',
-        note: 'แนวต้านสำคัญ $68,500 ทะลุเข้าซื้อตาม',
-        soundEnabled: true,
-        recurring: false,
-      },
-      {
-        id: 'alert-gold-default',
-        symbol: 'XAU/USD',
-        targetPrice: 2740,
-        condition: 'gte',
-        initialPrice: 2724.85,
-        createdAt: Date.now() - 7200000,
-        status: 'active',
-        note: 'ทองคำทดสอบ New High',
-        soundEnabled: true,
-        recurring: false,
-      },
-    ];
+    } catch {}
+    return [];
   });
 
   const [activeAlertToast, setActiveAlertToast] = useState<PriceAlert | null>(null);
@@ -84,31 +82,8 @@ export default function App() {
   const [prefilledAlertPrice, setPrefilledAlertPrice] = useState<number | null>(null);
   const [isAlertDrawerOpen, setIsAlertDrawerOpen] = useState<boolean>(false);
 
-  // Paper Trading & Positions State
-  const [account, setAccount] = useState<PaperAccount>(() => {
-    try {
-      const saved = localStorage.getItem(ACCOUNT_STORAGE_KEY);
-      if (saved) return JSON.parse(saved);
-    } catch {}
-    return {
-      balance: 50000.0,
-      equity: 50000.0,
-      marginUsed: 0.0,
-      freeMargin: 50000.0,
-      realizedPnl: 0.0,
-    };
-  });
-
-  const [positions, setPositions] = useState<Position[]>(() => {
-    try {
-      const saved = localStorage.getItem(POSITIONS_STORAGE_KEY);
-      if (saved) return JSON.parse(saved);
-    } catch {}
-    return [];
-  });
-
-  // Current active asset object
   const currentAsset = assets.find(a => a.symbol === selectedSymbol) || assets[0];
+  const isBinanceAsset = selectedSymbol === 'BTC/USDT' || selectedSymbol === 'ETH/USDT';
 
   // Save alerts to localStorage
   useEffect(() => {
@@ -117,35 +92,7 @@ export default function App() {
     } catch {}
   }, [alerts]);
 
-  // Save account & positions to localStorage
-  useEffect(() => {
-    try {
-      localStorage.setItem(ACCOUNT_STORAGE_KEY, JSON.stringify(account));
-      localStorage.setItem(POSITIONS_STORAGE_KEY, JSON.stringify(positions));
-    } catch {}
-  }, [account, positions]);
-
-  // Load candle history when selectedSymbol or timeframe changes
-  useEffect(() => {
-    const history = generateCandleHistory(currentAsset.price, timeframe, 80);
-    setCandles(history);
-
-    // Initial recent trades
-    const initialTrades: TradeTick[] = [];
-    const step = currentAsset.price * 0.0003;
-    for (let i = 0; i < 6; i++) {
-      initialTrades.push({
-        id: `init-${i}`,
-        price: currentAsset.price + (Math.random() - 0.5) * step * 3,
-        amount: Number(((Math.random() * 2 + 0.1) * (currentAsset.price > 1000 ? 0.3 : 15)).toFixed(2)),
-        time: Date.now() - (i * 4000),
-        side: Math.random() > 0.5 ? 'buy' : 'sell',
-      });
-    }
-    setRecentTrades(initialTrades);
-  }, [selectedSymbol, timeframe]);
-
-  // Real-time Market Tick Engine & Price Alert Checking
+  // Check alerts against real price update
   const checkPriceAlerts = useCallback((symbol: string, newPrice: number) => {
     setAlerts(prevAlerts => {
       let triggeredOne: PriceAlert | null = null;
@@ -167,16 +114,14 @@ export default function App() {
             triggeredAt: Date.now(),
           };
 
-          // Play Sound
           if (alert.soundEnabled && soundService.enabled) {
             soundService.playPriceAlertSound();
           }
 
-          // Browser Notification
           if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
             try {
               new Notification(`🔔 แจ้งเตือนราคา: ${alert.symbol}`, {
-                body: `ราคาถึงเป้าหมาย $${alert.targetPrice} แล้ว (ราคาปัจจุบัน $${newPrice.toFixed(2)}) ${alert.note ? `- ${alert.note}` : ''}`,
+                body: `ราคาถึงเป้าหมาย $${alert.targetPrice} แล้ว (ราคาล่าสุด $${newPrice.toFixed(2)}) ${alert.note ? `- ${alert.note}` : ''}`,
                 icon: '/favicon.ico',
               });
             } catch {}
@@ -200,192 +145,227 @@ export default function App() {
     });
   }, []);
 
-  // Update position TP/SL triggers and floating PnL
-  const checkPositionTriggers = useCallback((symbol: string, newPrice: number) => {
-    setPositions(prevPositions => {
-      return prevPositions.filter(pos => {
-        if (pos.symbol !== symbol) return true;
-
-        const isBuy = pos.side === 'buy';
-        let shouldClose = false;
-        let closeReason = '';
-
-        if (pos.takeProfit) {
-          if ((isBuy && newPrice >= pos.takeProfit) || (!isBuy && newPrice <= pos.takeProfit)) {
-            shouldClose = true;
-            closeReason = 'Take Profit';
-          }
-        }
-        if (pos.stopLoss) {
-          if ((isBuy && newPrice <= pos.stopLoss) || (!isBuy && newPrice >= pos.stopLoss)) {
-            shouldClose = true;
-            closeReason = 'Stop Loss';
-          }
-        }
-
-        if (shouldClose) {
-          const delta = isBuy ? (newPrice - pos.entryPrice) : (pos.entryPrice - newPrice);
-          const pnl = (delta / pos.entryPrice) * pos.margin * pos.leverage;
-
-          // Credit account
-          setAccount(acc => ({
-            ...acc,
-            balance: acc.balance + pos.margin + pnl,
-            equity: acc.equity + pnl,
-            marginUsed: Math.max(0, acc.marginUsed - pos.margin),
-            freeMargin: acc.freeMargin + pos.margin + pnl,
-            realizedPnl: acc.realizedPnl + pnl,
-          }));
-
-          soundService.playOrderFilledSound();
-          return false;
-        }
-
-        return true;
-      });
-    });
-  }, []);
-
-  // High-frequency Real-time Tick Loop
+  // Load candle data for current selected asset
   useEffect(() => {
-    const tickInterval = setInterval(() => {
-      setAssets(prevAssets => {
-        return prevAssets.map(asset => {
-          // Dynamic realistic micro-tick
-          const volFactor = asset.price < 50 ? 0.0006 : asset.price < 1000 ? 0.0004 : 0.0003;
-          const deltaPct = (Math.random() - 0.495) * volFactor;
-          const newPrice = Number(Math.max(0.01, asset.price * (1 + deltaPct)).toFixed(asset.decimals));
+    setCsvUploadError(null);
+    setCsvUploadSuccess(null);
 
-          // Check alerts and TP/SL for this asset
-          checkPriceAlerts(asset.symbol, newPrice);
-          checkPositionTriggers(asset.symbol, newPrice);
+    if (isBinanceAsset) {
+      // Load real klines from Binance REST API for BTC or ETH
+      let isMounted = true;
+      fetchBinanceKlines(selectedSymbol, timeframe)
+        .then(klineCandles => {
+          if (!isMounted) return;
+          if (klineCandles.length > 0) {
+            setCandles(klineCandles);
+            const last = klineCandles[klineCandles.length - 1];
+            const first = klineCandles[0];
+            const change = first.open > 0 ? ((last.close - first.open) / first.open) * 100 : 0;
+            const lastDate = formatCandleDate(last.time);
 
-          const newHigh = Math.max(asset.high24h, newPrice);
-          const newLow = Math.min(asset.low24h, newPrice);
+            setAssets(prev => prev.map(a => {
+              if (a.symbol === selectedSymbol) {
+                return {
+                  ...a,
+                  price: last.close,
+                  change24h: Number(change.toFixed(2)),
+                  lastCandleDate: lastDate,
+                  dataSource: 'Binance',
+                };
+              }
+              return a;
+            }));
 
-          return {
-            ...asset,
-            price: newPrice,
-            high24h: newHigh,
-            low24h: newLow,
-          };
+            // Check alerts on initial klines load
+            checkPriceAlerts(selectedSymbol, last.close);
+          }
+        })
+        .catch(err => {
+          console.warn('Binance klines fetch failed:', err);
         });
-      });
 
-      // Update current candle on the active chart
-      setCandles(prevCandles => {
-        if (prevCandles.length === 0) return prevCandles;
-        const last = { ...prevCandles[prevCandles.length - 1] };
-        const nowSec = Math.floor(Date.now() / 1000);
-        const tfSec = TIMEFRAME_SECONDS[timeframe];
+      return () => {
+        isMounted = false;
+      };
+    } else {
+      // Load CSV data from localStorage for other assets
+      const stored = getStoredCandles(selectedSymbol);
+      if (stored && stored.length > 0) {
+        setCandles(stored);
+        const last = stored[stored.length - 1];
+        const prev = stored.length > 1 ? stored[stored.length - 2] : last;
+        const change = prev.close > 0 ? ((last.close - prev.close) / prev.close) * 100 : 0;
+        const lastDate = formatCandleDate(last.time);
 
-        // Retrieve current updated price for selectedSymbol
-        const currentP = currentAsset.price;
+        setAssets(prev => prev.map(a => {
+          if (a.symbol === selectedSymbol) {
+            return {
+              ...a,
+              price: last.close,
+              change24h: Number(change.toFixed(2)),
+              lastCandleDate: lastDate,
+              dataSource: 'CSV Upload',
+            };
+          }
+          return a;
+        }));
+      } else {
+        setCandles([]);
+        setAssets(prev => prev.map(a => {
+          if (a.symbol === selectedSymbol) {
+            return {
+              ...a,
+              price: undefined,
+              change24h: undefined,
+              lastCandleDate: undefined,
+              dataSource: null,
+            };
+          }
+          return a;
+        }));
+      }
+    }
+  }, [selectedSymbol, timeframe, isBinanceAsset, checkPriceAlerts]);
 
-        if (nowSec - last.time >= tfSec) {
-          // Start new candle
-          const newCandle: Candle = {
-            time: Math.floor(nowSec / tfSec) * tfSec,
-            open: currentP,
-            high: currentP,
-            low: currentP,
-            close: currentP,
-            volume: 1,
-          };
-          return [...prevCandles.slice(1), newCandle];
-        } else {
-          // Update last candle
-          last.close = currentP;
-          last.high = Math.max(last.high, currentP);
-          last.low = Math.min(last.low, currentP);
-          last.volume = Number((last.volume + (Math.random() * 2 + 0.5)).toFixed(1));
-          return [...prevCandles.slice(0, prevCandles.length - 1), last];
-        }
-      });
-
-      // Add a trade tick
-      setRecentTrades(prev => {
-        const side: 'buy' | 'sell' = Math.random() > 0.5 ? 'buy' : 'sell';
-        const tradePrice = currentAsset.price;
-        const newTrade: TradeTick = {
-          id: `t-${Date.now()}`,
-          price: tradePrice,
-          amount: Number(((Math.random() * 1.5 + 0.1) * (tradePrice > 1000 ? 0.2 : 20)).toFixed(2)),
-          time: Date.now(),
-          side,
-        };
-        return [newTrade, ...prev.slice(0, 19)];
-      });
-
-    }, 850);
-
-    return () => clearInterval(tickInterval);
-  }, [checkPriceAlerts, checkPositionTriggers, currentAsset.price, currentAsset.decimals, currentAsset.symbol, timeframe]);
-
-  // Recalculate account equity with unrealized PnL of open positions
+  // Real Binance WebSocket for BTC and ETH real price updates
   useEffect(() => {
-    let unrealized = 0;
-    positions.forEach(pos => {
-      const asset = assets.find(a => a.symbol === pos.symbol);
-      const curPrice = asset ? asset.price : pos.entryPrice;
-      const isBuy = pos.side === 'buy';
-      const delta = isBuy ? (curPrice - pos.entryPrice) : (pos.entryPrice - curPrice);
-      unrealized += (delta / pos.entryPrice) * pos.margin * pos.leverage;
-    });
+    if (!isBinanceAsset || typeof window === 'undefined') {
+      setIsLiveWs(false);
+      return;
+    }
 
-    setAccount(acc => ({
-      ...acc,
-      equity: acc.balance + unrealized,
-    }));
-  }, [assets, positions]);
-
-  // Public Binance WebSocket for Bitcoin & Ethereum real-time ticks
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
     let ws: WebSocket | null = null;
+    const streamSymbol = selectedSymbol === 'BTC/USDT' ? 'btcusdt' : 'ethusdt';
 
     try {
-      const streamSymbol = selectedSymbol === 'BTC/USDT' ? 'btcusdt' : selectedSymbol === 'ETH/USDT' ? 'ethusdt' : null;
-      if (streamSymbol) {
-        ws = new WebSocket(`wss://stream.binance.com:9443/ws/${streamSymbol}@trade`);
-        ws.onopen = () => {
-          setIsLiveWs(true);
-        };
-        ws.onmessage = (event) => {
-          try {
-            const data = JSON.parse(event.data);
-            const livePrice = parseFloat(data.p);
-            if (!isNaN(livePrice)) {
-              setAssets(prev => prev.map(a => {
-                if (a.symbol === selectedSymbol) {
-                  checkPriceAlerts(a.symbol, livePrice);
-                  checkPositionTriggers(a.symbol, livePrice);
-                  return { ...a, price: livePrice };
-                }
-                return a;
-              }));
-            }
-          } catch {}
-        };
-        ws.onerror = () => {
-          setIsLiveWs(false);
-        };
-        ws.onclose = () => {
-          setIsLiveWs(false);
-        };
-      } else {
-        setIsLiveWs(false);
-      }
+      ws = new WebSocket(`wss://stream.binance.com:9443/ws/${streamSymbol}@trade`);
+      ws.onopen = () => {
+        setIsLiveWs(true);
+      };
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          const livePrice = parseFloat(data.p);
+          const tradeTimeSec = Math.floor((data.T || Date.now()) / 1000);
+
+          if (!isNaN(livePrice)) {
+            const formattedDate = formatCandleDate(tradeTimeSec);
+
+            // Update real price in master asset list
+            setAssets(prev => prev.map(a => {
+              if (a.symbol === selectedSymbol) {
+                return {
+                  ...a,
+                  price: livePrice,
+                  lastCandleDate: formattedDate,
+                  dataSource: 'Binance',
+                };
+              }
+              return a;
+            }));
+
+            // Check alerts on real tick
+            checkPriceAlerts(selectedSymbol, livePrice);
+
+            // Update current candle in chart
+            setCandles(prevCandles => {
+              if (prevCandles.length === 0) return prevCandles;
+              const last = { ...prevCandles[prevCandles.length - 1] };
+              last.close = livePrice;
+              last.high = Math.max(last.high, livePrice);
+              last.low = Math.min(last.low, livePrice);
+              return [...prevCandles.slice(0, prevCandles.length - 1), last];
+            });
+          }
+        } catch {}
+      };
+      ws.onerror = () => setIsLiveWs(false);
+      ws.onclose = () => setIsLiveWs(false);
     } catch {
       setIsLiveWs(false);
     }
 
     return () => {
-      if (ws) {
-        ws.close();
+      if (ws) ws.close();
+    };
+  }, [selectedSymbol, isBinanceAsset, checkPriceAlerts]);
+
+  // Handle TradingView CSV File Upload
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setCsvUploadError(null);
+    setCsvUploadSuccess(null);
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const text = event.target?.result as string;
+        const parsed = parseTradingViewCSV(text);
+
+        if (parsed.length === 0) {
+          throw new Error('ไม่พบข้อมูลแท่งเทียนที่ถูกต้องในไฟล์ CSV (ต้องมีคอลัมน์: time, open, high, low, close)');
+        }
+
+        // Store parsed candles in localStorage
+        setStoredCandles(selectedSymbol, parsed);
+        setCandles(parsed);
+
+        const last = parsed[parsed.length - 1];
+        const prev = parsed.length > 1 ? parsed[parsed.length - 2] : last;
+        const change = prev.close > 0 ? ((last.close - prev.close) / prev.close) * 100 : 0;
+        const lastDate = formatCandleDate(last.time);
+
+        setAssets(prev => prev.map(a => {
+          if (a.symbol === selectedSymbol) {
+            return {
+              ...a,
+              price: last.close,
+              change24h: Number(change.toFixed(2)),
+              lastCandleDate: lastDate,
+              dataSource: 'CSV Upload',
+            };
+          }
+          return a;
+        }));
+
+        // Check alerts on the last close of newly uploaded CSV
+        checkPriceAlerts(selectedSymbol, last.close);
+
+        setCsvUploadSuccess(`อัปโหลดสำเร็จ: โหลด ${parsed.length} แท่งเทียน (ข้อมูลล่าสุด: ${lastDate})`);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : 'เกิดข้อผิดพลาดในการประมวลผล CSV';
+        setCsvUploadError(msg);
       }
     };
-  }, [selectedSymbol, checkPriceAlerts, checkPositionTriggers]);
+    reader.onerror = () => {
+      setCsvUploadError('ไม่สามารถอ่านไฟล์ได้');
+    };
+    reader.readAsText(file);
+  };
+
+  const handleClearCSV = () => {
+    if (confirm(`คุณต้องการลบข้อมูล CSV ของ ${selectedSymbol} หรือไม่?`)) {
+      setStoredCandles(selectedSymbol, []);
+      setCandles([]);
+      setAssets(prev => prev.map(a => {
+        if (a.symbol === selectedSymbol) {
+          return {
+            ...a,
+            price: undefined,
+            change24h: undefined,
+            lastCandleDate: undefined,
+            dataSource: null,
+          };
+        }
+        return a;
+      }));
+      setCsvUploadSuccess(null);
+      setCsvUploadError(null);
+    }
+  };
 
   // Alert Handlers
   const handleSaveAlert = (newAlertData: Omit<PriceAlert, 'id' | 'createdAt' | 'status'>) => {
@@ -432,62 +412,9 @@ export default function App() {
     }));
   };
 
-  // Trade Position Handlers
-  const handleOpenPosition = (newPos: Omit<Position, 'id' | 'openedAt' | 'pnl' | 'pnlPercent'>) => {
-    const pos: Position = {
-      ...newPos,
-      id: `pos-${Date.now()}`,
-      openedAt: Date.now(),
-      pnl: 0,
-      pnlPercent: 0,
-    };
-
-    setAccount(acc => ({
-      ...acc,
-      balance: acc.balance - pos.margin,
-      marginUsed: acc.marginUsed + pos.margin,
-      freeMargin: acc.freeMargin - pos.margin,
-    }));
-
-    setPositions(prev => [pos, ...prev]);
-  };
-
-  const handleClosePosition = (id: string) => {
-    const pos = positions.find(p => p.id === id);
-    if (!pos) return;
-
-    const asset = assets.find(a => a.symbol === pos.symbol);
-    const curPrice = asset ? asset.price : pos.entryPrice;
-    const isBuy = pos.side === 'buy';
-    const delta = isBuy ? (curPrice - pos.entryPrice) : (pos.entryPrice - curPrice);
-    const pnl = (delta / pos.entryPrice) * pos.margin * pos.leverage;
-
-    setAccount(acc => ({
-      ...acc,
-      balance: acc.balance + pos.margin + pnl,
-      equity: acc.equity + pnl,
-      marginUsed: Math.max(0, acc.marginUsed - pos.margin),
-      freeMargin: acc.freeMargin + pos.margin + pnl,
-      realizedPnl: acc.realizedPnl + pnl,
-    }));
-
-    setPositions(prev => prev.filter(p => p.id !== id));
-  };
-
-  const handleResetAccount = () => {
-    if (confirm('คุณต้องการรีเซ็ตพอร์ตจำลองเป็น $50,000 USDT และล้างประวัติออเดอร์หรือไม่?')) {
-      setPositions([]);
-      setAccount({
-        balance: 50000.0,
-        equity: 50000.0,
-        marginUsed: 0.0,
-        freeMargin: 50000.0,
-        realizedPnl: 0.0,
-      });
-    }
-  };
-
   const activeAlertCount = alerts.filter(a => a.status === 'active').length;
+  const currentSymbolAlerts = alerts.filter(a => a.symbol === selectedSymbol && a.status === 'active');
+  const hasRealPrice = currentAsset.price !== undefined && currentAsset.price !== null;
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
@@ -517,16 +444,19 @@ export default function App() {
           selectedSymbol={selectedSymbol}
           onSelectSymbol={setSelectedSymbol}
           alerts={alerts}
+          onUploadClick={(sym) => {
+            setSelectedSymbol(sym);
+            if (fileInputRef.current) fileInputRef.current.click();
+          }}
         />
 
         {activeView === 'calculator' ? (
           <RiskCalculator assets={assets} currentAsset={currentAsset} />
         ) : (
-          <>
-            {/* Terminal Grid: Left (Chart) | Middle (Order Book) | Right (Trading Panel) */}
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 min-h-[580px]">
-              {/* Interactive Trading Chart Canvas (7 Cols on desktop) */}
-              <div className="lg:col-span-7 h-[560px] lg:h-auto min-h-[500px]">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 min-h-[580px]">
+            {/* Interactive Trading Chart (9 Cols on desktop) */}
+            <div className="lg:col-span-9 h-[580px] lg:h-auto min-h-[520px]">
+              {candles.length > 0 ? (
                 <TradingChart
                   candles={candles}
                   symbol={selectedSymbol}
@@ -534,7 +464,7 @@ export default function App() {
                   timeframe={timeframe}
                   onTimeframeChange={setTimeframe}
                   alerts={alerts}
-                  currentPrice={currentAsset.price}
+                  currentPrice={currentAsset.price ?? 0}
                   onQuickAddAlert={handleQuickAddAlert}
                   onOpenAlertModal={() => {
                     setPrefilledAlertPrice(null);
@@ -542,49 +472,222 @@ export default function App() {
                   }}
                   isLive={isLiveWs}
                 />
-              </div>
+              ) : (
+                <div className="flex flex-col items-center justify-center h-full min-h-[500px] bg-slate-900 border border-slate-800 rounded-xl p-8 text-center">
+                  <div className="w-16 h-16 rounded-2xl bg-slate-800/80 border border-slate-700 flex items-center justify-center text-amber-400 mb-4 shadow-lg">
+                    <FileSpreadsheet className="w-8 h-8" />
+                  </div>
+                  <h3 className="text-base font-bold text-white mb-1">
+                    ยังไม่มีข้อมูลราคาสำหรับ {currentAsset.symbol} ({currentAsset.thaiName})
+                  </h3>
+                  <p className="text-xs text-slate-400 max-w-md mb-6 leading-relaxed">
+                    แอปพลิเคชันจะไม่สร้างข้อมูลสุ่มหรือข้อมูลจำลอง กรุณาอัปโหลดไฟล์ CSV ที่ส่งออกจาก TradingView เพื่อเริ่มดูกราฟวิเคราะห์และตั้งแจ้งเตือนราคา
+                  </p>
 
-              {/* Order Book & Depth (2.5 Cols) */}
-              <div className="lg:col-span-2.5 h-[560px] lg:h-auto">
-                <OrderBook
-                  asset={currentAsset}
-                  recentTrades={recentTrades}
-                  onSelectPrice={(p) => handleQuickAddAlert(p)}
-                />
-              </div>
+                  <label className="px-5 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-xl shadow-lg shadow-amber-500/20 flex items-center gap-2 cursor-pointer transition-all">
+                    <UploadCloud className="w-4 h-4" />
+                    <span>อัปโหลดไฟล์ CSV (TradingView)</span>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept=".csv,text/csv"
+                      onChange={handleFileUpload}
+                      className="hidden"
+                    />
+                  </label>
 
-              {/* Trade Execution Panel (2.5 Cols) */}
-              <div className="lg:col-span-2.5 h-[560px] lg:h-auto">
-                <TradeExecution
-                  asset={currentAsset}
-                  account={account}
-                  onOpenPosition={handleOpenPosition}
-                  onSetAlert={(p, n) => {
-                    handleSaveAlert({
-                      symbol: currentAsset.symbol,
-                      targetPrice: p,
-                      condition: p >= currentAsset.price ? 'gte' : 'lte',
-                      initialPrice: currentAsset.price,
-                      note: n,
-                      soundEnabled: true,
-                      recurring: false,
-                    });
-                  }}
-                />
-              </div>
+                  <div className="mt-4 text-[11px] text-slate-400 font-mono">
+                    คอลัมน์ที่รองรับ: time, open, high, low, close, volume
+                  </div>
+                </div>
+              )}
             </div>
 
-            {/* Bottom Positions & Portfolio Panel */}
-            <div className="w-full">
-              <PositionsPanel
-                positions={positions}
-                assets={assets}
-                account={account}
-                onClosePosition={handleClosePosition}
-                onResetAccount={handleResetAccount}
-              />
+            {/* Right Information & Data Source / CSV Management Panel (3 Cols) */}
+            <div className="lg:col-span-3 space-y-3 flex flex-col">
+              {/* Asset Header & Real Price Card */}
+              <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-2xl">{currentAsset.icon}</span>
+                      <div>
+                        <h2 className="text-base font-bold text-white">{currentAsset.symbol}</h2>
+                        <span className="text-xs text-slate-400">{currentAsset.name} · {currentAsset.thaiName}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
+                    {currentAsset.unit}
+                  </span>
+                </div>
+
+                {/* Price Display */}
+                <div className="pt-2 border-t border-slate-800/80">
+                  {hasRealPrice ? (
+                    <div>
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-2xl font-mono font-bold text-white">
+                          ${currentAsset.price!.toLocaleString(undefined, { minimumFractionDigits: currentAsset.decimals })}
+                        </span>
+                        {currentAsset.change24h !== undefined && (
+                          <span
+                            className={`text-xs font-mono font-bold ${
+                              currentAsset.change24h >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                            }`}
+                          >
+                            {currentAsset.change24h >= 0 ? '+' : ''}{currentAsset.change24h.toFixed(2)}%
+                          </span>
+                        )}
+                      </div>
+                      {/* Required Data as of label */}
+                      <div className="text-[11px] text-slate-400 font-sans mt-1">
+                        Data as of {currentAsset.lastCandleDate || 'Live'} — Source: {currentAsset.dataSource || 'Binance'}
+                      </div>
+                    </div>
+                  ) : (
+                    <div>
+                      <span className="text-sm font-semibold text-amber-400 block">
+                        ยังไม่มีข้อมูล — อัปโหลด CSV
+                      </span>
+                      <div className="text-[11px] text-slate-400 font-sans mt-1">
+                        Data as of -- — Source: CSV upload
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Data Source Management Card (CSV Upload) */}
+              <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3">
+                <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+                  <div className="flex items-center gap-1.5 font-bold text-xs text-slate-200">
+                    <FileSpreadsheet className="w-4 h-4 text-amber-400" />
+                    <span>แหล่งข้อมูลราคา (Data Source)</span>
+                  </div>
+                  {isBinanceAsset ? (
+                    <span className="text-[10px] font-mono text-emerald-400 flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                      Binance Live
+                    </span>
+                  ) : (
+                    <span className="text-[10px] font-mono text-amber-400">
+                      CSV Upload
+                    </span>
+                  )}
+                </div>
+
+                {isBinanceAsset ? (
+                  <div className="text-xs text-slate-400 space-y-2">
+                    <p className="leading-relaxed">
+                      สินทรัพย์นี้ดึงข้อมูลแท่งเทียนจริงจาก Binance REST API และรับราคาแบบเรียลไทม์ผ่าน Binance WebSocket
+                    </p>
+                    <div className="text-[11px] text-slate-400 bg-slate-950 p-2 rounded-lg border border-slate-800">
+                      สถานะ WebSocket: {isLiveWs ? <span className="text-emerald-400 font-semibold">กำลังเชื่อมต่อ (Connected)</span> : <span className="text-slate-400">รอการเชื่อมต่อ</span>}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <p className="text-xs text-slate-400 leading-relaxed">
+                      สำหรับ {currentAsset.name} ({currentAsset.symbol}) รองรับการอัปโหลดไฟล์ประวัติราคาจาก TradingView CSV:
+                    </p>
+
+                    {/* File Upload Trigger */}
+                    <div>
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept=".csv,text/csv"
+                        onChange={handleFileUpload}
+                        className="hidden"
+                        id="csv-file-input"
+                      />
+                      <label
+                        htmlFor="csv-file-input"
+                        className="w-full py-2.5 px-3 rounded-xl border border-dashed border-slate-700 hover:border-amber-500 bg-slate-950/60 hover:bg-slate-950 flex items-center justify-center gap-2 text-xs font-semibold text-slate-300 hover:text-amber-400 cursor-pointer transition-colors"
+                      >
+                        <UploadCloud className="w-4 h-4 text-amber-400" />
+                        <span>เลือกไฟล์ CSV เพื่ออัปโหลด</span>
+                      </label>
+                    </div>
+
+                    {/* Upload feedback */}
+                    {csvUploadSuccess && (
+                      <div className="p-2.5 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-[11px] text-emerald-400 flex items-start gap-2">
+                        <CheckCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                        <span>{csvUploadSuccess}</span>
+                      </div>
+                    )}
+
+                    {csvUploadError && (
+                      <div className="p-2.5 bg-rose-500/10 border border-rose-500/30 rounded-xl text-[11px] text-rose-400 flex items-start gap-2">
+                        <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                        <span>{csvUploadError}</span>
+                      </div>
+                    )}
+
+                    {candles.length > 0 && (
+                      <div className="flex items-center justify-between pt-1">
+                        <span className="text-[11px] text-slate-400 font-mono">
+                          บันทึกแล้ว: {candles.length} แท่ง
+                        </span>
+                        <button
+                          onClick={handleClearCSV}
+                          className="text-[11px] text-rose-400 hover:text-rose-300 flex items-center gap-1 transition-colors cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>ลบข้อมูล CSV</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Price Alerts Summary for this Asset */}
+              <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3 flex-1">
+                <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+                  <span className="font-bold text-xs text-slate-200">
+                    การแจ้งเตือนราคาของ {currentAsset.symbol} ({currentSymbolAlerts.length})
+                  </span>
+                  <button
+                    onClick={() => {
+                      setPrefilledAlertPrice(null);
+                      setIsAlertModalOpen(true);
+                    }}
+                    className="text-[11px] text-amber-400 hover:text-amber-300 font-semibold cursor-pointer"
+                  >
+                    + ตั้งเตือน
+                  </button>
+                </div>
+
+                {currentSymbolAlerts.length === 0 ? (
+                  <div className="text-center py-6 text-slate-400 text-xs">
+                    ยังไม่มีการตั้งเตือนสำหรับสินทรัพย์นี้
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {currentSymbolAlerts.map(alert => (
+                      <div key={alert.id} className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-between text-xs">
+                        <div>
+                          <div className="font-mono font-bold text-white">
+                            {alert.condition === 'gte' ? '≥' : '≤'} ${alert.targetPrice.toLocaleString(undefined, { minimumFractionDigits: currentAsset.decimals })}
+                          </div>
+                          {alert.note && <div className="text-[10px] text-amber-400/80">{alert.note}</div>}
+                        </div>
+                        <button
+                          onClick={() => handleDeleteAlert(alert.id)}
+                          className="text-slate-500 hover:text-rose-400 p-1"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
-          </>
+          </div>
         )}
       </main>
 

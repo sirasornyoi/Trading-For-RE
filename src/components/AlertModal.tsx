@@ -18,12 +18,12 @@ export const AlertModal: React.FC<AlertModalProps> = ({
   prefilledPrice,
   onSaveAlert,
 }) => {
-  const currentPrice = asset.price;
+  const currentPrice = asset.price ?? 0;
   const [targetPrice, setTargetPrice] = useState<string>(
-    prefilledPrice ? prefilledPrice.toString() : currentPrice.toString()
+    prefilledPrice ? prefilledPrice.toString() : (currentPrice > 0 ? (currentPrice * 1.01).toFixed(asset.decimals) : '')
   );
   const [condition, setCondition] = useState<'gte' | 'lte'>(
-    prefilledPrice && prefilledPrice < currentPrice ? 'lte' : 'gte'
+    prefilledPrice && currentPrice > 0 && prefilledPrice < currentPrice ? 'lte' : 'gte'
   );
   const [note, setNote] = useState<string>('');
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
@@ -39,8 +39,8 @@ export const AlertModal: React.FC<AlertModalProps> = ({
   useEffect(() => {
     if (prefilledPrice) {
       setTargetPrice(prefilledPrice.toFixed(asset.decimals));
-      setCondition(prefilledPrice >= currentPrice ? 'gte' : 'lte');
-    } else {
+      setCondition(currentPrice > 0 && prefilledPrice < currentPrice ? 'lte' : 'gte');
+    } else if (currentPrice > 0) {
       // Default to +1% target
       const defaultTarget = currentPrice * 1.01;
       setTargetPrice(defaultTarget.toFixed(asset.decimals));
@@ -51,10 +51,11 @@ export const AlertModal: React.FC<AlertModalProps> = ({
   if (!isOpen) return null;
 
   const numTarget = parseFloat(targetPrice) || 0;
-  const priceDiff = numTarget - currentPrice;
+  const priceDiff = currentPrice > 0 ? numTarget - currentPrice : 0;
   const percentDiff = currentPrice > 0 ? (priceDiff / currentPrice) * 100 : 0;
 
   const handleApplyPreset = (percent: number) => {
+    if (currentPrice <= 0) return;
     const calculated = currentPrice * (1 + percent / 100);
     setTargetPrice(calculated.toFixed(asset.decimals));
     setCondition(percent >= 0 ? 'gte' : 'lte');
@@ -117,7 +118,7 @@ export const AlertModal: React.FC<AlertModalProps> = ({
           <div className="flex items-center justify-between p-3 rounded-xl bg-slate-950/70 border border-slate-800">
             <span className="text-xs text-slate-400">ราคาตลาดปัจจุบัน:</span>
             <span className="text-sm font-mono font-bold text-cyan-400">
-              ${currentPrice.toFixed(asset.decimals)} {asset.unit}
+              {currentPrice > 0 ? `$${currentPrice.toFixed(asset.decimals)} ${asset.unit}` : 'ยังไม่มีข้อมูลราคา (กรุณาระบุราคาเองหรืออัปโหลด CSV)'}
             </span>
           </div>
 

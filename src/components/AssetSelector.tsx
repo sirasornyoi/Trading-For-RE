@@ -1,12 +1,13 @@
 import React, { useState } from 'react';
 import { Asset, AssetCategory, PriceAlert } from '../types/trading';
-import { TrendingUp, TrendingDown, Bell } from 'lucide-react';
+import { TrendingUp, TrendingDown, Bell, UploadCloud } from 'lucide-react';
 
 interface AssetSelectorProps {
   assets: Asset[];
   selectedSymbol: string;
   onSelectSymbol: (symbol: string) => void;
   alerts: PriceAlert[];
+  onUploadClick?: (symbol: string) => void;
 }
 
 export const AssetSelector: React.FC<AssetSelectorProps> = ({
@@ -14,6 +15,7 @@ export const AssetSelector: React.FC<AssetSelectorProps> = ({
   selectedSymbol,
   onSelectSymbol,
   alerts,
+  onUploadClick,
 }) => {
   const [filter, setFilter] = useState<AssetCategory | 'all'>('all');
 
@@ -33,7 +35,7 @@ export const AssetSelector: React.FC<AssetSelectorProps> = ({
           {[
             { id: 'all', label: 'ทั้งหมด' },
             { id: 'crypto', label: 'คริปโต (Crypto)' },
-            { id: 'commodity', label: 'ทองคำ / เงิน (Metals)' },
+            { id: 'commodity', label: 'ทองคำ / เงิน / ฟิวเจอร์ส' },
             { id: 'stock', label: 'หุ้นเทคโนโลยี (Stocks)' },
           ].map(tab => (
             <button
@@ -49,8 +51,8 @@ export const AssetSelector: React.FC<AssetSelectorProps> = ({
             </button>
           ))}
         </div>
-        <div className="text-[11px] text-slate-500 hidden sm:block">
-          อัปเดตราคาแบบเรียลไทม์
+        <div className="text-[11px] text-slate-400 hidden sm:block">
+          ข้อมูลจริงจาก Binance & CSV Upload
         </div>
       </div>
 
@@ -58,20 +60,21 @@ export const AssetSelector: React.FC<AssetSelectorProps> = ({
       <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-thin">
         {filteredAssets.map(asset => {
           const isSelected = asset.symbol === selectedSymbol;
-          const isUp = asset.change24h >= 0;
+          const hasPrice = asset.price !== undefined && asset.price !== null;
+          const isUp = (asset.change24h ?? 0) >= 0;
           const alertCount = getAlertCount(asset.symbol);
 
           return (
             <button
               key={asset.symbol}
               onClick={() => onSelectSymbol(asset.symbol)}
-              className={`flex-shrink-0 flex items-center gap-2.5 px-3 py-2 rounded-xl border text-left transition-all cursor-pointer ${
+              className={`flex-shrink-0 flex items-start gap-2.5 px-3 py-2 rounded-xl border text-left transition-all cursor-pointer ${
                 isSelected
                   ? 'bg-slate-800 border-amber-500/80 shadow-md shadow-amber-500/10'
                   : 'bg-slate-950/60 border-slate-800/80 hover:border-slate-700 hover:bg-slate-800/40'
               }`}
             >
-              <span className="text-xl">{asset.icon}</span>
+              <span className="text-xl mt-0.5">{asset.icon}</span>
               <div>
                 <div className="flex items-center gap-1.5">
                   <span className="text-xs font-bold text-white tracking-wide">{asset.symbol}</span>
@@ -83,23 +86,43 @@ export const AssetSelector: React.FC<AssetSelectorProps> = ({
                     </span>
                   )}
                 </div>
-                <div className="flex items-center gap-2 mt-0.5 font-mono">
-                  <span className="text-xs font-bold text-slate-100">
-                    ${asset.price.toLocaleString(undefined, { minimumFractionDigits: asset.decimals })}
-                  </span>
-                  <span
-                    className={`text-[11px] font-semibold flex items-center ${
-                      isUp ? 'text-emerald-400' : 'text-rose-400'
-                    }`}
-                  >
-                    {isUp ? (
-                      <TrendingUp className="w-3 h-3 inline mr-0.5" />
-                    ) : (
-                      <TrendingDown className="w-3 h-3 inline mr-0.5" />
-                    )}
-                    {isUp ? '+' : ''}{asset.change24h.toFixed(2)}%
-                  </span>
-                </div>
+
+                {hasPrice ? (
+                  <>
+                    <div className="flex items-center gap-2 mt-0.5 font-mono">
+                      <span className="text-xs font-bold text-slate-100">
+                        ${asset.price!.toLocaleString(undefined, { minimumFractionDigits: asset.decimals })}
+                      </span>
+                      {asset.change24h !== undefined && (
+                        <span
+                          className={`text-[11px] font-semibold flex items-center ${
+                            isUp ? 'text-emerald-400' : 'text-rose-400'
+                          }`}
+                        >
+                          {isUp ? (
+                            <TrendingUp className="w-3 h-3 inline mr-0.5" />
+                          ) : (
+                            <TrendingDown className="w-3 h-3 inline mr-0.5" />
+                          )}
+                          {isUp ? '+' : ''}{asset.change24h.toFixed(2)}%
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[9.5px] text-slate-400 font-sans mt-0.5">
+                      Data as of {asset.lastCandleDate || 'Live'} — Source: {asset.dataSource || 'Binance'}
+                    </div>
+                  </>
+                ) : (
+                  <div className="mt-0.5">
+                    <span className="text-[11px] text-amber-400/90 font-medium flex items-center gap-1">
+                      <UploadCloud className="w-3 h-3 inline" />
+                      <span>ยังไม่มีข้อมูล — อัปโหลด CSV</span>
+                    </span>
+                    <div className="text-[9.5px] text-slate-500 font-sans mt-0.5">
+                      Source: CSV upload
+                    </div>
+                  </div>
+                )}
               </div>
             </button>
           );

@@ -2,8 +2,8 @@ import React from 'react';
 import { Bell, Volume2, VolumeX, ShieldAlert, Sparkles, TrendingUp } from 'lucide-react';
 
 interface TopNavProps {
-  activeView: 'trade' | 'alerts' | 'portfolio' | 'calculator';
-  setActiveView: (view: 'trade' | 'alerts' | 'portfolio' | 'calculator') => void;
+  activeView: 'trade' | 'alerts' | 'calculator';
+  setActiveView: (view: 'trade' | 'alerts' | 'calculator') => void;
   activeAlertCount: number;
   onOpenAlertDrawer: () => void;
   soundEnabled: boolean;
@@ -59,14 +59,6 @@ export const TopNav: React.FC<TopNavProps> = ({
               {activeAlertCount}
             </span>
           )}
-        </button>
-        <button
-          onClick={() => setActiveView('portfolio')}
-          className={`hover:text-white transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-            activeView === 'portfolio' ? 'text-amber-400 font-bold' : ''
-          }`}
-        >
-          พอร์ตจำลอง
         </button>
         <button
           onClick={() => setActiveView('calculator')}

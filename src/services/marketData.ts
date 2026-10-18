@@ -6,11 +6,6 @@ export const INITIAL_ASSETS: Asset[] = [
     name: 'Bitcoin',
     thaiName: 'บิตคอยน์',
     category: 'crypto',
-    price: 67845.50,
-    change24h: 3.42,
-    high24h: 68420.00,
-    low24h: 65110.00,
-    volume24h: '4.28B',
     decimals: 2,
     unit: 'USDT',
     icon: '₿',
@@ -20,11 +15,6 @@ export const INITIAL_ASSETS: Asset[] = [
     name: 'Ethereum',
     thaiName: 'อีเธอเรียม',
     category: 'crypto',
-    price: 2645.20,
-    change24h: 2.15,
-    high24h: 2690.00,
-    low24h: 2560.50,
-    volume24h: '1.92B',
     decimals: 2,
     unit: 'USDT',
     icon: 'Ξ',
@@ -34,25 +24,24 @@ export const INITIAL_ASSETS: Asset[] = [
     name: 'Solana',
     thaiName: 'โซลานา',
     category: 'crypto',
-    price: 156.80,
-    change24h: 5.84,
-    high24h: 159.90,
-    low24h: 147.20,
-    volume24h: '850M',
     decimals: 2,
     unit: 'USDT',
     icon: '◎',
+  },
+  {
+    symbol: 'SI1!',
+    name: 'Silver Futures',
+    thaiName: 'ซิลเวอร์ฟิวเจอร์ส (COMEX)',
+    category: 'commodity',
+    decimals: 3,
+    unit: 'USD/oz',
+    icon: '🥈',
   },
   {
     symbol: 'XAU/USD',
     name: 'Gold Spot',
     thaiName: 'ทองคำสปอต',
     category: 'commodity',
-    price: 2724.85,
-    change24h: 0.88,
-    high24h: 2736.20,
-    low24h: 2708.40,
-    volume24h: '3.15B',
     decimals: 2,
     unit: 'USD/oz',
     icon: '🥇',
@@ -62,11 +51,6 @@ export const INITIAL_ASSETS: Asset[] = [
     name: 'Silver Spot',
     thaiName: 'โลหะเงิน',
     category: 'commodity',
-    price: 32.14,
-    change24h: 1.76,
-    high24h: 32.48,
-    low24h: 31.40,
-    volume24h: '680M',
     decimals: 2,
     unit: 'USD/oz',
     icon: '🥈',
@@ -76,11 +60,6 @@ export const INITIAL_ASSETS: Asset[] = [
     name: 'Crude Oil',
     thaiName: 'น้ำมันดิบ WTI',
     category: 'commodity',
-    price: 70.45,
-    change24h: -1.25,
-    high24h: 72.10,
-    low24h: 69.80,
-    volume24h: '1.4B',
     decimals: 2,
     unit: 'USD/bbl',
     icon: '🛢️',
@@ -90,11 +69,6 @@ export const INITIAL_ASSETS: Asset[] = [
     name: 'NVIDIA Corp',
     thaiName: 'เอ็นวิเดีย',
     category: 'stock',
-    price: 139.50,
-    change24h: 3.12,
-    high24h: 141.20,
-    low24h: 135.80,
-    volume24h: '52.4M',
     decimals: 2,
     unit: 'USD',
     icon: '🟢',
@@ -104,11 +78,6 @@ export const INITIAL_ASSETS: Asset[] = [
     name: 'Tesla Inc',
     thaiName: 'เทสลา',
     category: 'stock',
-    price: 221.30,
-    change24h: -2.45,
-    high24h: 228.00,
-    low24h: 218.60,
-    volume24h: '38.2M',
     decimals: 2,
     unit: 'USD',
     icon: '⚡',
@@ -118,11 +87,6 @@ export const INITIAL_ASSETS: Asset[] = [
     name: 'Apple Inc',
     thaiName: 'แอปเปิ้ล',
     category: 'stock',
-    price: 235.80,
-    change24h: 0.65,
-    high24h: 237.40,
-    low24h: 233.90,
-    volume24h: '28.1M',
     decimals: 2,
     unit: 'USD',
     icon: '🍎',
@@ -138,45 +102,102 @@ export const TIMEFRAME_SECONDS: Record<Timeframe, number> = {
   '1d': 86400,
 };
 
-// Generate realistic candlestick history for any asset and timeframe
-export function generateCandleHistory(basePrice: number, timeframe: Timeframe, count: number = 80): Candle[] {
-  const stepSeconds = TIMEFRAME_SECONDS[timeframe];
-  const now = Math.floor(Date.now() / 1000);
-  const startTime = now - (count * stepSeconds);
+// Fetch real historical klines from Binance REST API
+export async function fetchBinanceKlines(symbol: string, timeframe: Timeframe): Promise<Candle[]> {
+  const cleanSymbol = symbol.replace('/', '').toUpperCase();
+  const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${cleanSymbol}&interval=${timeframe}&limit=100`);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch Binance klines: ${res.statusText}`);
+  }
+  const data = await res.json();
+  if (!Array.isArray(data)) return [];
 
-  const candles: Candle[] = [];
-  let currentPrice = basePrice * (1 - (Math.random() * 0.05 - 0.025));
+  return data.map((item: (number | string)[]) => ({
+    time: Math.floor(Number(item[0]) / 1000),
+    open: parseFloat(item[1] as string),
+    high: parseFloat(item[2] as string),
+    low: parseFloat(item[3] as string),
+    close: parseFloat(item[4] as string),
+    volume: parseFloat(item[5] as string) || 0,
+  }));
+}
 
-  // Volatility scale factor based on asset price magnitude
-  const volFactor = basePrice < 100 ? 0.003 : basePrice < 1000 ? 0.0025 : 0.002;
+// Parse TradingView CSV export (case-insensitive column matching: time, open, high, low, close, volume)
+export function parseTradingViewCSV(csvText: string): Candle[] {
+  const lines = csvText.trim().split(/\r?\n/).filter(line => line.trim().length > 0);
+  if (lines.length < 2) return [];
 
-  for (let i = 0; i < count; i++) {
-    const time = startTime + (i * stepSeconds);
-    const trend = Math.sin(i / 10) * 0.001; // subtle wave
-    const change = (Math.random() - 0.49 + trend) * volFactor * currentPrice;
-    
-    const open = currentPrice;
-    const close = Math.max(0.01, open + change);
-    const highWick = Math.random() * volFactor * currentPrice * 1.5;
-    const lowWick = Math.random() * volFactor * currentPrice * 1.5;
-    
-    const high = Math.max(open, close) + highWick;
-    const low = Math.min(open, close) - lowWick;
-    const volume = Math.floor(Math.random() * 500 + 100) * (basePrice > 10000 ? 0.2 : basePrice > 1000 ? 2 : 20);
+  const headerLine = lines[0];
+  const headers = headerLine.split(',').map(h => h.trim().toLowerCase().replace(/^["']|["']$/g, ''));
 
-    candles.push({
-      time,
-      open: Number(open.toFixed(2)),
-      high: Number(high.toFixed(2)),
-      low: Number(low.toFixed(2)),
-      close: Number(close.toFixed(2)),
-      volume: Number(volume.toFixed(1)),
-    });
+  const timeIdx = headers.findIndex(h => h === 'time' || h === 'date' || h === 'datetime');
+  const openIdx = headers.findIndex(h => h === 'open');
+  const highIdx = headers.findIndex(h => h === 'high');
+  const lowIdx = headers.findIndex(h => h === 'low');
+  const closeIdx = headers.findIndex(h => h === 'close');
+  const volIdx = headers.findIndex(h => h === 'volume' || h === 'vol');
 
-    currentPrice = close;
+  if (timeIdx === -1 || openIdx === -1 || highIdx === -1 || lowIdx === -1 || closeIdx === -1) {
+    throw new Error('CSV must contain time, open, high, low, close columns');
   }
 
+  const candles: Candle[] = [];
+
+  for (let i = 1; i < lines.length; i++) {
+    const row = lines[i].split(',').map(c => c.trim().replace(/^["']|["']$/g, ''));
+    if (row.length <= Math.max(timeIdx, openIdx, highIdx, lowIdx, closeIdx)) continue;
+
+    const rawTime = row[timeIdx];
+    let timestamp = 0;
+
+    const numTime = Number(rawTime);
+    if (!isNaN(numTime) && numTime > 0) {
+      timestamp = numTime > 10000000000 ? Math.floor(numTime / 1000) : Math.floor(numTime);
+    } else {
+      const parsedDate = new Date(rawTime).getTime();
+      if (!isNaN(parsedDate)) {
+        timestamp = Math.floor(parsedDate / 1000);
+      }
+    }
+
+    if (timestamp === 0) continue;
+
+    const open = parseFloat(row[openIdx]);
+    const high = parseFloat(row[highIdx]);
+    const low = parseFloat(row[lowIdx]);
+    const close = parseFloat(row[closeIdx]);
+    const volume = volIdx !== -1 && row[volIdx] ? parseFloat(row[volIdx]) : 0;
+
+    if (!isNaN(open) && !isNaN(high) && !isNaN(low) && !isNaN(close)) {
+      candles.push({
+        time: timestamp,
+        open,
+        high,
+        low,
+        close,
+        volume: isNaN(volume) ? 0 : volume,
+      });
+    }
+  }
+
+  // Sort ascending by time
+  candles.sort((a, b) => a.time - b.time);
   return candles;
+}
+
+// LocalStorage helpers for stored CSV candles per asset
+export function getStoredCandles(symbol: string): Candle[] {
+  try {
+    const raw = localStorage.getItem(`candles_${symbol}`);
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return [];
+}
+
+export function setStoredCandles(symbol: string, candles: Candle[]): void {
+  try {
+    localStorage.setItem(`candles_${symbol}`, JSON.stringify(candles));
+  } catch {}
 }
 
 // Indicator math: Exponential Moving Average
