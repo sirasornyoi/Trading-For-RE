@@ -22,6 +22,7 @@ import { AlertModal } from './components/AlertModal';
 import { AlertDrawer } from './components/AlertDrawer';
 import { AlertNotificationToast } from './components/AlertNotificationToast';
 import { RiskCalculator } from './components/RiskCalculator';
+import { MarketAnalysisView } from './components/MarketAnalysisView';
 import { UploadCloud, FileSpreadsheet, Trash2, CheckCircle, AlertCircle } from 'lucide-react';
 
 const ALERTS_STORAGE_KEY = 'apextrade_alerts_v2';
@@ -37,7 +38,7 @@ function formatCandleDate(timestampSec: number): string {
 }
 
 export default function App() {
-  const [activeView, setActiveView] = useState<'trade' | 'alerts' | 'calculator'>('trade');
+  const [activeView, setActiveView] = useState<'trade' | 'alerts' | 'calculator' | 'analysis'>('trade');
 
   // Master asset list without any hardcoded/simulated prices
   const [assets, setAssets] = useState<Asset[]>(() => {
@@ -539,6 +540,12 @@ export default function App() {
 
         {activeView === 'calculator' ? (
           <RiskCalculator assets={assets} currentAsset={currentAsset} />
+        ) : activeView === 'analysis' ? (
+          <MarketAnalysisView
+            assets={assets}
+            selectedSymbol={selectedSymbol}
+            onSelectSymbol={setSelectedSymbol}
+          />
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 min-h-[580px]">
             {/* Interactive Trading Chart (9 Cols on desktop) */}

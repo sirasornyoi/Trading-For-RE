@@ -57,3 +57,16 @@ export interface PriceAlert {
   recurring: boolean;
   armed?: boolean;
 }
+
+export interface EvidenceItem {
+  layer: 'Fundamental' | 'Technical' | 'News';
+  side: 'bull' | 'bear';
+  label: 'FACT' | 'INFER' | 'SPEC';
+  tier: 'T1' | 'T2' | 'T3';
+  value: string;
+  source_name: string;
+  source_url: string;
+  date: string;
+  mechanism: string;
+  side_basis: 'self-evident' | 'placed by model';
+}

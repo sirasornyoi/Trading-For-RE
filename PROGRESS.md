@@ -1,13 +1,18 @@
 # Project Progress
 
-## Task 3: Chart Enhancements & S/R Tester [done]
-- [done] Binance history limit=1000 for all timeframes, native "1w" weekly interval
-- [done] Added "1w" timeframe button for Binance assets in TradingChart toolbar
-- [done] Bullish engulfing 3-case labels (Buyer จริง, ปิดเหนือ แต่ volume ต่ำ, อาจเป็น short covering — รอแท่งยืนยันที่ 2)
-- [done] Support & Resistance tester: "วาดเส้น S/R" interactive placement, ±0.3% touch detection zone, clear button
-- [done] Consecutive touching candles grouped into single touch (start date, candle count, total volume, max range)
-- [done] 3-touch strength assessment using grouped volume and max range (never touch count)
-- [done] Shared `computeVisiblePriceRange` function unifying chart rendering and click-to-price positioning
+## Volume MA & S/R Enhancements [done]
+- [done] Volume MA(20) line overlaid on volume bars with toggle (on by default)
+- [done] Volume MA(20) current value displayed in OHLCV metrics bar
+- [done] S/R tester displays average volume per candle and MA20 ratio (e.g., 1.8× MA20)
+- [done] S/R strength compares last 3 touches via average volume per candle & max range
+- [done] Preserved previous-candle volume highlight
+
+## Task 4a: Market Evidence Analysis Backend & UI [done]
+- [done] Express route `POST /api/analyze` with server-side Gemini 3.8 Flash & Google Search grounding
+- [done] Mandatory system instruction embedded without buy/sell verdicts
+- [done] Structured JSON evidence schema (layer, side, label, tier, value, source_name, source_url, date, mechanism, side_basis)
+- [done] Server drops items missing source_url or date
+- [done] TopNav "Analysis" view with asset selector, "My thesis" text box, submit button, and evidence list UI
 
 ## Known Issues
-- None. Build, lint, and runtime dev server healthy.
+- None. Build, lint, and dev server compile cleanly.

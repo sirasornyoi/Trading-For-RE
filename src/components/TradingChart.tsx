@@ -116,6 +116,26 @@ export const TradingChart: React.FC<TradingChartProps> = ({
   });
   const [showIndicatorsMenu, setShowIndicatorsMenu] = useState(false);
   const [showBullishEngulfing, setShowBullishEngulfing] = useState<boolean>(true);
+  const [showVolumeMA, setShowVolumeMA] = useState<boolean>(true);
+
+  // Volume MA(20): Simple Moving Average of the last 20 candles' volume
+  const volumeMA = useMemo(() => {
+    const ma: (number | null)[] = [];
+    let sum = 0;
+    const period = 20;
+    for (let i = 0; i < candles.length; i++) {
+      sum += candles[i].volume || 0;
+      if (i >= period) {
+        sum -= candles[i - period].volume || 0;
+      }
+      if (i >= period - 1) {
+        ma.push(sum / period);
+      } else {
+        ma.push(sum / (i + 1));
+      }
+    }
+    return ma;
+  }, [candles]);
 
   // Support & Resistance Tester state
   const [srLevel, setSrLevel] = useState<number | null>(null);
@@ -131,16 +151,21 @@ export const TradingChart: React.FC<TradingChartProps> = ({
 
     const list: Array<{
       index: number;
+      startIndex: number;
       startTime: number;
       startDateStr: string;
       candleCount: number;
       totalVolume: number;
+      avgVolume: number;
+      startVolMA: number | null;
+      maRatio: number | null;
       maxRange: number;
       high: number;
       low: number;
     }> = [];
 
     let currentGroup: {
+      startIndex: number;
       startTime: number;
       startDateStr: string;
       candleCount: number;
@@ -164,6 +189,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
           const hh = String(d.getHours()).padStart(2, '0');
           const min = String(d.getMinutes()).padStart(2, '0');
           currentGroup = {
+            startIndex: i,
             startTime: c.time,
             startDateStr: `${yyyy}-${mm}-${dd} ${hh}:${min}`,
             candleCount: 1,
@@ -181,9 +207,15 @@ export const TradingChart: React.FC<TradingChartProps> = ({
         }
       } else {
         if (currentGroup) {
+          const avgVol = currentGroup.totalVolume / currentGroup.candleCount;
+          const sMa = volumeMA[currentGroup.startIndex] ?? null;
+          const ratio = sMa && sMa > 0 ? avgVol / sMa : null;
           list.push({
             index: list.length,
             ...currentGroup,
+            avgVolume: avgVol,
+            startVolMA: sMa,
+            maRatio: ratio,
           });
           currentGroup = null;
         }
@@ -191,40 +223,46 @@ export const TradingChart: React.FC<TradingChartProps> = ({
     }
 
     if (currentGroup) {
+      const avgVol = currentGroup.totalVolume / currentGroup.candleCount;
+      const sMa = volumeMA[currentGroup.startIndex] ?? null;
+      const ratio = sMa && sMa > 0 ? avgVol / sMa : null;
       list.push({
         index: list.length,
         ...currentGroup,
+        avgVolume: avgVol,
+        startVolMA: sMa,
+        maRatio: ratio,
       });
     }
 
     return list;
-  }, [candles, srLevel]);
+  }, [candles, srLevel, volumeMA]);
 
-  // S/R Strength Assessment: Compare last 3 touches using grouped values (Never use touch count as strength)
+  // S/R Strength Assessment: Compare last 3 touches using average volume per candle (Never use touch count as strength)
   const srAssessment = useMemo(() => {
     if (srTouches.length < 3) {
       return {
         status: 'insufficient',
         text: 'ต้องการข้อมูลทดสอบอย่างน้อย 3 ครั้ง',
-        detail: `ตรวจพบการสัมผัสระดับ ${srTouches.length} ครั้ง (ต้องใช้ข้อมูล 3 ครั้งล่าสุดเพื่อเปรียบเทียบ Volume และ Range)`,
+        detail: `ตรวจพบการสัมผัสระดับ ${srTouches.length} ครั้ง (ต้องใช้ข้อมูล 3 ครั้งล่าสุดเพื่อเปรียบเทียบ Avg Volume และ Range)`,
       };
     }
 
     const last3 = srTouches.slice(-3);
     const [t1, t2, t3] = last3;
 
-    // volume AND range rising → "Level อ่อนลง"
-    const isVolRising = t3.totalVolume > t2.totalVolume && t2.totalVolume > t1.totalVolume;
+    // volume AND range rising → "Level อ่อนลง" (using average volume per candle)
+    const isVolRising = t3.avgVolume > t2.avgVolume && t2.avgVolume > t1.avgVolume;
     const isRangeRising = t3.maxRange > t2.maxRange && t2.maxRange > t1.maxRange;
 
-    // volume falling → "Level ยังแข็ง"
-    const isVolFalling = t3.totalVolume < t2.totalVolume && t2.totalVolume < t1.totalVolume;
+    // volume falling → "Level ยังแข็ง" (using average volume per candle)
+    const isVolFalling = t3.avgVolume < t2.avgVolume && t2.avgVolume < t1.avgVolume;
 
     if (isVolRising && isRangeRising) {
       return {
         status: 'weak',
         text: 'Level อ่อนลง',
-        detail: 'Volume รวม และ Max Range เพิ่มขึ้นต่อเนื่องในการทดสอบ 3 ครั้งล่าสุด (แรงทะลุเพิ่มขึ้น)',
+        detail: 'Avg Volume ต่อแท่ง และ Max Range เพิ่มขึ้นต่อเนื่องในการทดสอบ 3 ครั้งล่าสุด (แรงทะลุเพิ่มขึ้น)',
       };
     }
 
@@ -232,14 +270,14 @@ export const TradingChart: React.FC<TradingChartProps> = ({
       return {
         status: 'strong',
         text: 'Level ยังแข็ง',
-        detail: 'Volume รวมลดลงต่อเนื่องในการทดสอบ 3 ครั้งล่าสุด (แรงกดดันลดลง แนวรับ/ต้านยังต้านอยู่)',
+        detail: 'Avg Volume ต่อแท่ง ลดลงต่อเนื่องในการทดสอบ 3 ครั้งล่าสุด (แรงกดดันลดลง แนวรับ/ต้านยังต้านอยู่)',
       };
     }
 
     return {
       status: 'neutral',
       text: 'รอสัญญาณยืนยัน',
-      detail: 'แนวโน้ม Volume รวม และ Max Range ของ 3 ครั้งล่าสุดยังไม่เข้าเกณฑ์ชัดเจน',
+      detail: 'แนวโน้ม Avg Volume ต่อแท่ง และ Max Range ของ 3 ครั้งล่าสุดยังไม่เข้าเกณฑ์ชัดเจน',
     };
   }, [srTouches]);
 
@@ -396,6 +434,32 @@ export const TradingChart: React.FC<TradingChartProps> = ({
           ctx.fillRect(x, chartHeight - vHeight, candleWidth, vHeight);
         }
       });
+
+      // Volume MA(20) line drawn over volume bars
+      if (showVolumeMA) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.strokeStyle = '#f59e0b';
+        ctx.lineWidth = 1.5 * dpr;
+        let started = false;
+
+        visibleCandles.forEach((_, idx) => {
+          const globalIdx = startGlobalIdx + idx;
+          const ma = volumeMA[globalIdx];
+          if (ma !== null && ma !== undefined) {
+            const x = idx * slotWidth + slotWidth / 2;
+            const y = chartHeight - (ma / maxVolume) * volumeAreaHeight;
+            if (!started) {
+              ctx.moveTo(x, y);
+              started = true;
+            } else {
+              ctx.lineTo(x, y);
+            }
+          }
+        });
+        ctx.stroke();
+        ctx.restore();
+      }
     }
 
     // Bollinger Bands Cloud
@@ -739,7 +803,9 @@ export const TradingChart: React.FC<TradingChartProps> = ({
     candles.length,
     showBullishEngulfing,
     srLevel,
-    isWeeklyView
+    isWeeklyView,
+    showVolumeMA,
+    volumeMA
   ]);
 
   // Sub-Indicator Canvas (RSI or MACD)
@@ -1039,6 +1105,8 @@ export const TradingChart: React.FC<TradingChartProps> = ({
   // Metrics bar values: use crosshair candle if hovering, or latest candle
   const displayCandle = crosshair?.candle || (visibleCandles.length > 0 ? visibleCandles[visibleCandles.length - 1] : null);
   const candleChange = displayCandle ? ((displayCandle.close - displayCandle.open) / displayCandle.open) * 100 : 0;
+  const displayCandleIdx = displayCandle ? candles.findIndex(c => c.time === displayCandle.time) : -1;
+  const displayVolMA = displayCandleIdx >= 0 ? volumeMA[displayCandleIdx] : null;
 
   return (
     <div className="flex flex-col h-full bg-slate-900 border border-slate-800 rounded-xl overflow-hidden select-none">
@@ -1170,6 +1238,16 @@ export const TradingChart: React.FC<TradingChartProps> = ({
                 </div>
                 {indicators.showVolume ? <Eye className="w-3.5 h-3.5 text-blue-400" /> : <EyeOff className="w-3.5 h-3.5 text-slate-500" />}
               </button>
+              <button
+                onClick={() => setShowVolumeMA(prev => !prev)}
+                className="w-full flex items-center justify-between px-2 py-1.5 rounded-lg hover:bg-slate-800/70 text-slate-200"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-amber-400"></span>
+                  <span>Volume MA (20)</span>
+                </div>
+                {showVolumeMA ? <Eye className="w-3.5 h-3.5 text-amber-400" /> : <EyeOff className="w-3.5 h-3.5 text-slate-500" />}
+              </button>
             </div>
           )}
         </div>
@@ -1281,6 +1359,9 @@ export const TradingChart: React.FC<TradingChartProps> = ({
               {candleChange >= 0 ? '+' : ''}{candleChange.toFixed(2)}%
             </span>
             <span>Vol: <span className="text-slate-300">{displayCandle.volume.toLocaleString()}</span></span>
+            {showVolumeMA && displayVolMA !== null && displayVolMA !== undefined && (
+              <span>Vol MA(20): <span className="text-amber-400 font-mono font-semibold">{Math.round(displayVolMA).toLocaleString()}</span></span>
+            )}
           </div>
         )}
 
@@ -1446,11 +1527,17 @@ export const TradingChart: React.FC<TradingChartProps> = ({
                           </div>
                         </div>
                         <div className="flex items-center justify-between text-[10px] text-slate-400">
-                          <span>Vol รวม: <span className="text-white font-mono">{Math.round(touch.totalVolume).toLocaleString()}</span></span>
-                          <span>Max Range: <span className="text-white font-mono">{touch.maxRange.toFixed(decimals)}</span></span>
+                          <span>Avg Vol: <span className="text-white font-mono">{Math.round(touch.avgVolume).toLocaleString()}</span></span>
+                          <span>
+                            Ratio:{' '}
+                            <span className="text-amber-400 font-mono font-bold">
+                              {touch.maRatio !== null ? `${touch.maRatio.toFixed(1)}× MA20` : '—'}
+                            </span>
+                          </span>
                         </div>
-                        <div className="text-[9px] text-slate-500 mt-0.5">
-                          High: {touch.high.toFixed(decimals)} | Low: {touch.low.toFixed(decimals)}
+                        <div className="flex items-center justify-between text-[9px] text-slate-500 mt-0.5">
+                          <span>Max Range: <span className="text-slate-300 font-mono">{touch.maxRange.toFixed(decimals)}</span></span>
+                          <span>Vol รวม: <span className="text-slate-300 font-mono">{Math.round(touch.totalVolume).toLocaleString()}</span></span>
                         </div>
                       </div>
                     );

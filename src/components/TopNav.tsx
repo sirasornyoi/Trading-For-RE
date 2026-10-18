@@ -2,8 +2,8 @@ import React from 'react';
 import { Bell, Volume2, VolumeX, ShieldAlert, Sparkles, TrendingUp } from 'lucide-react';
 
 interface TopNavProps {
-  activeView: 'trade' | 'alerts' | 'calculator';
-  setActiveView: (view: 'trade' | 'alerts' | 'calculator') => void;
+  activeView: 'trade' | 'alerts' | 'calculator' | 'analysis';
+  setActiveView: (view: 'trade' | 'alerts' | 'calculator' | 'analysis') => void;
   activeAlertCount: number;
   onOpenAlertDrawer: () => void;
   soundEnabled: boolean;
@@ -46,6 +46,15 @@ export const TopNav: React.FC<TopNavProps> = ({
           }`}
         >
           กราฟและกระดานเทรด
+        </button>
+        <button
+          onClick={() => setActiveView('analysis')}
+          className={`hover:text-white transition-colors whitespace-nowrap shrink-0 cursor-pointer flex items-center gap-1.5 ${
+            activeView === 'analysis' ? 'text-amber-400 font-bold' : ''
+          }`}
+        >
+          <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+          <span>วิเคราะห์หลักฐาน (Analysis)</span>
         </button>
         <button
           onClick={onOpenAlertDrawer}
