@@ -18,6 +18,7 @@ import { soundService } from './services/sound';
 import { TopNav } from './components/TopNav';
 import { AssetSelector } from './components/AssetSelector';
 import { TradingChart } from './components/TradingChart';
+import { LwChart } from './components/LwChart';
 import { AlertModal } from './components/AlertModal';
 import { AlertDrawer } from './components/AlertDrawer';
 import { AlertNotificationToast } from './components/AlertNotificationToast';
@@ -39,6 +40,7 @@ function formatCandleDate(timestampSec: number): string {
 
 export default function App() {
   const [activeView, setActiveView] = useState<'trade' | 'alerts' | 'calculator' | 'analysis'>('trade');
+  const [chartEngine, setChartEngine] = useState<'new' | 'legacy'>('new');
 
   // Master asset list without any hardcoded/simulated prices
   const [assets, setAssets] = useState<Asset[]>(() => {
@@ -549,27 +551,75 @@ export default function App() {
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 min-h-[580px]">
             {/* Interactive Trading Chart (9 Cols on desktop) */}
-            <div className="lg:col-span-9 h-[580px] lg:h-auto min-h-[520px]">
+            <div className="lg:col-span-9 flex flex-col min-h-[580px]">
+              {/* Chart Switcher: กราฟใหม่ / กราฟเดิม */}
+              <div className="flex items-center justify-between mb-2">
+                <div className="inline-flex items-center p-0.5 bg-slate-900 border border-slate-800 rounded-lg text-xs">
+                  <button
+                    onClick={() => setChartEngine('new')}
+                    className={`px-3 py-1 font-semibold rounded-md transition-all ${
+                      chartEngine === 'new'
+                        ? 'bg-amber-500 text-slate-950 shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    กราฟใหม่
+                  </button>
+                  <button
+                    onClick={() => setChartEngine('legacy')}
+                    className={`px-3 py-1 font-semibold rounded-md transition-all ${
+                      chartEngine === 'legacy'
+                        ? 'bg-amber-500 text-slate-950 shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    กราฟเดิม
+                  </button>
+                </div>
+              </div>
+
               {candles.length > 0 ? (
-                <TradingChart
-                  candles={displayedCandles}
-                  symbol={selectedSymbol}
-                  decimals={currentAsset.decimals}
-                  timeframe={timeframe}
-                  onTimeframeChange={setTimeframe}
-                  alerts={alerts}
-                  currentPrice={currentAsset.price ?? 0}
-                  onQuickAddAlert={handleQuickAddAlert}
-                  onOpenAlertModal={() => {
-                    setPrefilledAlertPrice(null);
-                    setIsAlertModalOpen(true);
-                  }}
-                  isLive={isLiveWs}
-                  isTimeframeDisabled={!isBinanceAsset}
-                  isWeeklyView={isWeeklyView}
-                  onToggleWeeklyView={() => setIsWeeklyView(v => !v)}
-                  canToggleWeeklyView={isCsvDaily}
-                />
+                chartEngine === 'new' ? (
+                  <LwChart
+                    candles={displayedCandles}
+                    symbol={selectedSymbol}
+                    decimals={currentAsset.decimals}
+                    timeframe={timeframe}
+                    onTimeframeChange={setTimeframe}
+                    alerts={alerts}
+                    currentPrice={currentAsset.price ?? 0}
+                    onQuickAddAlert={handleQuickAddAlert}
+                    onOpenAlertModal={() => {
+                      setPrefilledAlertPrice(null);
+                      setIsAlertModalOpen(true);
+                    }}
+                    isLive={isLiveWs}
+                    isTimeframeDisabled={!isBinanceAsset}
+                    isWeeklyView={isWeeklyView}
+                    onToggleWeeklyView={() => setIsWeeklyView(v => !v)}
+                    canToggleWeeklyView={isCsvDaily}
+                  />
+                ) : (
+                  <TradingChart
+                    candles={displayedCandles}
+                    symbol={selectedSymbol}
+                    decimals={currentAsset.decimals}
+                    timeframe={timeframe}
+                    onTimeframeChange={setTimeframe}
+                    alerts={alerts}
+                    currentPrice={currentAsset.price ?? 0}
+                    onQuickAddAlert={handleQuickAddAlert}
+                    onOpenAlertModal={() => {
+                      setPrefilledAlertPrice(null);
+                      setIsAlertModalOpen(true);
+                    }}
+                    isLive={isLiveWs}
+                    isTimeframeDisabled={!isBinanceAsset}
+                    isWeeklyView={isWeeklyView}
+                    onToggleWeeklyView={() => setIsWeeklyView(v => !v)}
+                    canToggleWeeklyView={isCsvDaily}
+                  />
+                )
               ) : (
                 <div className="flex flex-col items-center justify-center h-full min-h-[500px] bg-slate-900 border border-slate-800 rounded-xl p-8 text-center">
                   <div className="w-16 h-16 rounded-2xl bg-slate-800/80 border border-slate-700 flex items-center justify-center text-amber-400 mb-4 shadow-lg">

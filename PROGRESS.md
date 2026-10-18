@@ -18,5 +18,13 @@
 - [done] MarketAnalysisView displays red "ลิงก์ไม่พบในผลค้นหาจริง" badge for items where verified is false
 - [done] Cleaned up unused `src/components/AnalysisView.tsx`
 
+## Task 5a: TradingView Lightweight Charts Integration [done]
+- [done] Installed `lightweight-charts` v5
+- [done] Created `src/components/LwChart.tsx` with attributionLogo enabled (license requirement)
+- [done] Two-pane layout: Candlesticks in main pane (pane 0), volume histogram colored by candle direction in lower pane (pane 1) with Volume MA(20) line (null for first 19 candles)
+- [done] Crosshair in normal mode with price label on right axis and time label on bottom axis
+- [done] Top-left legend updating on hover (fallback to latest candle): O, H, L, C, change % vs previous close, Volume, Vol MA(20)
+- [done] Chart switcher toggle "กราฟใหม่ / กราฟเดิม" above the chart defaulting to new chart (TradingChart.tsx preserved)
+
 ## Known Issues
 - None. Build, lint, and dev server compile cleanly.
