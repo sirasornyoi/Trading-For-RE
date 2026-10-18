@@ -9,12 +9,14 @@ export interface Asset {
   unit: string;
   icon: string;
   price?: number;
+  changeVsPrevCandle?: number;
   change24h?: number;
   high24h?: number;
   low24h?: number;
   volume24h?: string;
   lastCandleDate?: string;
   dataSource?: 'Binance' | 'CSV Upload' | null;
+  csvTimeframe?: string;
 }
 
 export interface Candle {
@@ -51,4 +53,5 @@ export interface PriceAlert {
   note?: string;
   soundEnabled: boolean;
   recurring: boolean;
+  armed?: boolean;
 }

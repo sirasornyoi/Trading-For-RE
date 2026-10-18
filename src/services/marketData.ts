@@ -200,6 +200,32 @@ export function setStoredCandles(symbol: string, candles: Candle[]): void {
   } catch {}
 }
 
+export function detectCandleTimeframe(candles: Candle[]): string {
+  if (candles.length < 2) return '1D';
+  const diffs: number[] = [];
+  const limit = Math.min(25, candles.length);
+  for (let i = 1; i < limit; i++) {
+    const diff = Math.abs(candles[i].time - candles[i - 1].time);
+    if (diff > 0) diffs.push(diff);
+  }
+  if (diffs.length === 0) return '1D';
+  diffs.sort((a, b) => a - b);
+  const median = diffs[Math.floor(diffs.length / 2)];
+
+  if (median <= 90) return '1m';
+  if (median <= 210) return '3m';
+  if (median <= 450) return '5m';
+  if (median <= 1200) return '15m';
+  if (median <= 2700) return '30m';
+  if (median <= 5400) return '1h';
+  if (median <= 10800) return '2h';
+  if (median <= 21600) return '4h';
+  if (median <= 43200) return '8h';
+  if (median <= 120000) return '1D';
+  if (median <= 700000) return '1W';
+  return '1M';
+}
+
 // Indicator math: Exponential Moving Average
 export function calculateEMA(data: number[], period: number): (number | null)[] {
   const result: (number | null)[] = [];

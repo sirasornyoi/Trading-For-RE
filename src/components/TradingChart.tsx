@@ -26,6 +26,7 @@ interface TradingChartProps {
   onQuickAddAlert: (price: number) => void;
   onOpenAlertModal: () => void;
   isLive: boolean;
+  isTimeframeDisabled?: boolean;
 }
 
 export const TradingChart: React.FC<TradingChartProps> = ({
@@ -39,6 +40,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
   onQuickAddAlert,
   onOpenAlertModal,
   isLive,
+  isTimeframeDisabled = false,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const mainCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -778,9 +780,13 @@ export const TradingChart: React.FC<TradingChartProps> = ({
           {(['1m', '5m', '15m', '1h', '4h', '1d'] as Timeframe[]).map((tf) => (
             <button
               key={tf}
+              disabled={isTimeframeDisabled}
               onClick={() => onTimeframeChange(tf)}
+              title={isTimeframeDisabled ? 'Timeframe ถูกกำหนดโดยไฟล์ CSV ของสินทรัพย์นี้' : tf.toUpperCase()}
               className={`px-2.5 py-1 font-mono text-[11px] font-semibold rounded-md transition-colors ${
-                timeframe === tf
+                isTimeframeDisabled
+                  ? 'opacity-35 cursor-not-allowed text-slate-500'
+                  : timeframe === tf
                   ? 'bg-amber-500 text-slate-950 shadow-sm'
                   : 'text-slate-400 hover:text-slate-100'
               }`}

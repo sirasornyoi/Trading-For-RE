@@ -93,23 +93,27 @@ export const AssetSelector: React.FC<AssetSelectorProps> = ({
                       <span className="text-xs font-bold text-slate-100">
                         ${asset.price!.toLocaleString(undefined, { minimumFractionDigits: asset.decimals })}
                       </span>
-                      {asset.change24h !== undefined && (
+                      {(asset.changeVsPrevCandle !== undefined || asset.change24h !== undefined) && (
                         <span
                           className={`text-[11px] font-semibold flex items-center ${
-                            isUp ? 'text-emerald-400' : 'text-rose-400'
+                            (asset.changeVsPrevCandle ?? asset.change24h ?? 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'
                           }`}
+                          title="change vs previous candle"
                         >
-                          {isUp ? (
+                          {(asset.changeVsPrevCandle ?? asset.change24h ?? 0) >= 0 ? (
                             <TrendingUp className="w-3 h-3 inline mr-0.5" />
                           ) : (
                             <TrendingDown className="w-3 h-3 inline mr-0.5" />
                           )}
-                          {isUp ? '+' : ''}{asset.change24h.toFixed(2)}%
+                          {(asset.changeVsPrevCandle ?? asset.change24h ?? 0) >= 0 ? '+' : ''}
+                          {(asset.changeVsPrevCandle ?? asset.change24h ?? 0).toFixed(2)}%
                         </span>
                       )}
                     </div>
                     <div className="text-[9.5px] text-slate-400 font-sans mt-0.5">
-                      Data as of {asset.lastCandleDate || 'Live'} — Source: {asset.dataSource || 'Binance'}
+                      Data as of {asset.lastCandleDate || 'Live'}
+                      {asset.dataSource === 'CSV Upload' && asset.csvTimeframe ? ` (${asset.csvTimeframe})` : ''}
+                      {' — Source: '}{asset.dataSource || 'Binance'}
                     </div>
                   </>
                 ) : (

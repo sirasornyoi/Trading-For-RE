@@ -10,7 +10,8 @@ import {
   fetchBinanceKlines, 
   parseTradingViewCSV, 
   getStoredCandles, 
-  setStoredCandles 
+  setStoredCandles,
+  detectCandleTimeframe,
 } from './services/marketData';
 import { soundService } from './services/sound';
 import { TopNav } from './components/TopNav';
@@ -20,7 +21,7 @@ import { AlertModal } from './components/AlertModal';
 import { AlertDrawer } from './components/AlertDrawer';
 import { AlertNotificationToast } from './components/AlertNotificationToast';
 import { RiskCalculator } from './components/RiskCalculator';
-import { UploadCloud, FileSpreadsheet, Trash2, CheckCircle, AlertCircle, Info } from 'lucide-react';
+import { UploadCloud, FileSpreadsheet, Trash2, CheckCircle, AlertCircle } from 'lucide-react';
 
 const ALERTS_STORAGE_KEY = 'apextrade_alerts_v2';
 
@@ -46,12 +47,14 @@ export default function App() {
         const last = stored[stored.length - 1];
         const prev = stored.length > 1 ? stored[stored.length - 2] : last;
         const change = prev.close > 0 ? ((last.close - prev.close) / prev.close) * 100 : 0;
+        const tf = detectCandleTimeframe(stored);
         return {
           ...asset,
           price: last.close,
-          change24h: Number(change.toFixed(2)),
+          changeVsPrevCandle: Number(change.toFixed(2)),
           lastCandleDate: formatCandleDate(last.time),
           dataSource: 'CSV Upload',
+          csvTimeframe: tf,
         };
       }
       return asset;
@@ -98,7 +101,22 @@ export default function App() {
       let triggeredOne: PriceAlert | null = null;
 
       const updated = prevAlerts.map(alert => {
-        if (alert.symbol !== symbol || alert.status !== 'active') {
+        if (alert.symbol !== symbol) {
+          return alert;
+        }
+
+        // For recurring alerts that triggered, check if price crossed back to re-arm
+        if (alert.recurring && alert.status === 'active' && alert.armed === false) {
+          if (alert.condition === 'gte' && newPrice < alert.targetPrice) {
+            return { ...alert, armed: true };
+          }
+          if (alert.condition === 'lte' && newPrice > alert.targetPrice) {
+            return { ...alert, armed: true };
+          }
+          return alert;
+        }
+
+        if (alert.status !== 'active' || alert.armed === false) {
           return alert;
         }
 
@@ -111,6 +129,7 @@ export default function App() {
           triggeredOne = {
             ...alert,
             status: nextStatus,
+            armed: false,
             triggeredAt: Date.now(),
           };
 
@@ -130,6 +149,7 @@ export default function App() {
           return {
             ...alert,
             status: nextStatus,
+            armed: false,
             triggeredAt: Date.now(),
           };
         }
@@ -159,8 +179,8 @@ export default function App() {
           if (klineCandles.length > 0) {
             setCandles(klineCandles);
             const last = klineCandles[klineCandles.length - 1];
-            const first = klineCandles[0];
-            const change = first.open > 0 ? ((last.close - first.open) / first.open) * 100 : 0;
+            const prev = klineCandles.length > 1 ? klineCandles[klineCandles.length - 2] : last;
+            const change = prev.close > 0 ? ((last.close - prev.close) / prev.close) * 100 : 0;
             const lastDate = formatCandleDate(last.time);
 
             setAssets(prev => prev.map(a => {
@@ -168,7 +188,7 @@ export default function App() {
                 return {
                   ...a,
                   price: last.close,
-                  change24h: Number(change.toFixed(2)),
+                  changeVsPrevCandle: Number(change.toFixed(2)),
                   lastCandleDate: lastDate,
                   dataSource: 'Binance',
                 };
@@ -196,15 +216,17 @@ export default function App() {
         const prev = stored.length > 1 ? stored[stored.length - 2] : last;
         const change = prev.close > 0 ? ((last.close - prev.close) / prev.close) * 100 : 0;
         const lastDate = formatCandleDate(last.time);
+        const tf = detectCandleTimeframe(stored);
 
         setAssets(prev => prev.map(a => {
           if (a.symbol === selectedSymbol) {
             return {
               ...a,
               price: last.close,
-              change24h: Number(change.toFixed(2)),
+              changeVsPrevCandle: Number(change.toFixed(2)),
               lastCandleDate: lastDate,
               dataSource: 'CSV Upload',
+              csvTimeframe: tf,
             };
           }
           return a;
@@ -216,9 +238,10 @@ export default function App() {
             return {
               ...a,
               price: undefined,
-              change24h: undefined,
+              changeVsPrevCandle: undefined,
               lastCandleDate: undefined,
               dataSource: null,
+              csvTimeframe: undefined,
             };
           }
           return a;
@@ -227,7 +250,7 @@ export default function App() {
     }
   }, [selectedSymbol, timeframe, isBinanceAsset, checkPriceAlerts]);
 
-  // Real Binance WebSocket for BTC and ETH real price updates
+  // Real Binance @kline_<interval> WebSocket for BTC and ETH real price updates
   useEffect(() => {
     if (!isBinanceAsset || typeof window === 'undefined') {
       setIsLiveWs(false);
@@ -238,44 +261,90 @@ export default function App() {
     const streamSymbol = selectedSymbol === 'BTC/USDT' ? 'btcusdt' : 'ethusdt';
 
     try {
-      ws = new WebSocket(`wss://stream.binance.com:9443/ws/${streamSymbol}@trade`);
+      ws = new WebSocket(`wss://stream.binance.com:9443/ws/${streamSymbol}@kline_${timeframe}`);
       ws.onopen = () => {
         setIsLiveWs(true);
       };
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
-          const livePrice = parseFloat(data.p);
-          const tradeTimeSec = Math.floor((data.T || Date.now()) / 1000);
+          if (data && data.k) {
+            const k = data.k;
+            const openTime = Math.floor(k.t / 1000);
+            const open = parseFloat(k.o);
+            const high = parseFloat(k.h);
+            const low = parseFloat(k.l);
+            const close = parseFloat(k.c);
+            const volume = parseFloat(k.v);
+            const isClosed = k.x === true;
 
-          if (!isNaN(livePrice)) {
-            const formattedDate = formatCandleDate(tradeTimeSec);
+            if (!isNaN(close)) {
+              const formattedDate = formatCandleDate(openTime);
 
-            // Update real price in master asset list
-            setAssets(prev => prev.map(a => {
-              if (a.symbol === selectedSymbol) {
-                return {
-                  ...a,
-                  price: livePrice,
-                  lastCandleDate: formattedDate,
-                  dataSource: 'Binance',
+              // Check alerts on real price updates
+              checkPriceAlerts(selectedSymbol, close);
+
+              // Update candle series: update while open, append/finalize when closed
+              setCandles(prevCandles => {
+                if (prevCandles.length === 0) return prevCandles;
+
+                const updatedCandle: Candle = {
+                  time: openTime,
+                  open,
+                  high,
+                  low,
+                  close,
+                  volume,
                 };
-              }
-              return a;
-            }));
 
-            // Check alerts on real tick
-            checkPriceAlerts(selectedSymbol, livePrice);
+                const lastIdx = prevCandles.length - 1;
+                const isSameAsLast = prevCandles[lastIdx].time === openTime;
 
-            // Update current candle in chart
-            setCandles(prevCandles => {
-              if (prevCandles.length === 0) return prevCandles;
-              const last = { ...prevCandles[prevCandles.length - 1] };
-              last.close = livePrice;
-              last.high = Math.max(last.high, livePrice);
-              last.low = Math.min(last.low, livePrice);
-              return [...prevCandles.slice(0, prevCandles.length - 1), last];
-            });
+                // Calculate change vs previous candle from the last two candles
+                let changePct = 0;
+                if (isSameAsLast) {
+                  if (prevCandles.length > 1) {
+                    const prevC = prevCandles[prevCandles.length - 2];
+                    changePct = prevC.close > 0 ? ((close - prevC.close) / prevC.close) * 100 : 0;
+                  } else {
+                    changePct = open > 0 ? ((close - open) / open) * 100 : 0;
+                  }
+                } else {
+                  const prevC = prevCandles[lastIdx];
+                  changePct = prevC.close > 0 ? ((close - prevC.close) / prevC.close) * 100 : 0;
+                }
+
+                setAssets(prevAssets => prevAssets.map(a => {
+                  if (a.symbol === selectedSymbol) {
+                    return {
+                      ...a,
+                      price: close,
+                      changeVsPrevCandle: Number(changePct.toFixed(2)),
+                      lastCandleDate: formattedDate,
+                      dataSource: 'Binance',
+                    };
+                  }
+                  return a;
+                }));
+
+                if (isClosed) {
+                  if (isSameAsLast) {
+                    return [...prevCandles.slice(0, lastIdx), updatedCandle];
+                  } else {
+                    return [...prevCandles, updatedCandle];
+                  }
+                } else {
+                  // Update the last candle while it is open
+                  if (isSameAsLast) {
+                    const copy = [...prevCandles];
+                    copy[lastIdx] = updatedCandle;
+                    return copy;
+                  } else {
+                    return [...prevCandles, updatedCandle];
+                  }
+                }
+              });
+            }
           }
         } catch {}
       };
@@ -288,7 +357,7 @@ export default function App() {
     return () => {
       if (ws) ws.close();
     };
-  }, [selectedSymbol, isBinanceAsset, checkPriceAlerts]);
+  }, [selectedSymbol, timeframe, isBinanceAsset, checkPriceAlerts]);
 
   // Handle TradingView CSV File Upload
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -316,15 +385,17 @@ export default function App() {
         const prev = parsed.length > 1 ? parsed[parsed.length - 2] : last;
         const change = prev.close > 0 ? ((last.close - prev.close) / prev.close) * 100 : 0;
         const lastDate = formatCandleDate(last.time);
+        const tf = detectCandleTimeframe(parsed);
 
         setAssets(prev => prev.map(a => {
           if (a.symbol === selectedSymbol) {
             return {
               ...a,
               price: last.close,
-              change24h: Number(change.toFixed(2)),
+              changeVsPrevCandle: Number(change.toFixed(2)),
               lastCandleDate: lastDate,
               dataSource: 'CSV Upload',
+              csvTimeframe: tf,
             };
           }
           return a;
@@ -333,7 +404,7 @@ export default function App() {
         // Check alerts on the last close of newly uploaded CSV
         checkPriceAlerts(selectedSymbol, last.close);
 
-        setCsvUploadSuccess(`อัปโหลดสำเร็จ: โหลด ${parsed.length} แท่งเทียน (ข้อมูลล่าสุด: ${lastDate})`);
+        setCsvUploadSuccess(`อัปโหลดสำเร็จ: โหลด ${parsed.length} แท่งเทียน (Timeframe: ${tf}, ข้อมูลล่าสุด: ${lastDate})`);
         if (fileInputRef.current) fileInputRef.current.value = '';
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : 'เกิดข้อผิดพลาดในการประมวลผล CSV';
@@ -355,9 +426,11 @@ export default function App() {
           return {
             ...a,
             price: undefined,
+            changeVsPrevCandle: undefined,
             change24h: undefined,
             lastCandleDate: undefined,
             dataSource: null,
+            csvTimeframe: undefined,
           };
         }
         return a;
@@ -374,6 +447,7 @@ export default function App() {
       id: `alert-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
       createdAt: Date.now(),
       status: 'active',
+      armed: true,
     };
     setAlerts(prev => [alert, ...prev]);
   };
@@ -389,6 +463,7 @@ export default function App() {
         return {
           ...a,
           status: a.status === 'active' ? 'disabled' : 'active',
+          armed: a.status !== 'active',
         };
       }
       return a;
@@ -405,6 +480,7 @@ export default function App() {
         return {
           ...a,
           status: 'active',
+          armed: true,
           triggeredAt: undefined,
         };
       }
@@ -471,6 +547,7 @@ export default function App() {
                     setIsAlertModalOpen(true);
                   }}
                   isLive={isLiveWs}
+                  isTimeframeDisabled={!isBinanceAsset}
                 />
               ) : (
                 <div className="flex flex-col items-center justify-center h-full min-h-[500px] bg-slate-900 border border-slate-800 rounded-xl p-8 text-center">
@@ -530,19 +607,26 @@ export default function App() {
                         <span className="text-2xl font-mono font-bold text-white">
                           ${currentAsset.price!.toLocaleString(undefined, { minimumFractionDigits: currentAsset.decimals })}
                         </span>
-                        {currentAsset.change24h !== undefined && (
+                        {(currentAsset.changeVsPrevCandle !== undefined || currentAsset.change24h !== undefined) && (
                           <span
                             className={`text-xs font-mono font-bold ${
-                              currentAsset.change24h >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                              (currentAsset.changeVsPrevCandle ?? currentAsset.change24h ?? 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'
                             }`}
+                            title="change vs previous candle"
                           >
-                            {currentAsset.change24h >= 0 ? '+' : ''}{currentAsset.change24h.toFixed(2)}%
+                            {(currentAsset.changeVsPrevCandle ?? currentAsset.change24h ?? 0) >= 0 ? '+' : ''}
+                            {(currentAsset.changeVsPrevCandle ?? currentAsset.change24h ?? 0).toFixed(2)}%
                           </span>
                         )}
                       </div>
-                      {/* Required Data as of label */}
+                      <div className="text-[10px] text-slate-400 font-sans mt-0.5">
+                        change vs previous candle
+                      </div>
+                      {/* Required Data as of label with detected CSV timeframe */}
                       <div className="text-[11px] text-slate-400 font-sans mt-1">
-                        Data as of {currentAsset.lastCandleDate || 'Live'} — Source: {currentAsset.dataSource || 'Binance'}
+                        Data as of {currentAsset.lastCandleDate || 'Live'}
+                        {currentAsset.dataSource === 'CSV Upload' && currentAsset.csvTimeframe ? ` (TF: ${currentAsset.csvTimeframe})` : ''}
+                        {' — Source: '}{currentAsset.dataSource || 'Binance'}
                       </div>
                     </div>
                   ) : (
