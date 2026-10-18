@@ -1,0 +1,6 @@
+{
+  "name": "ApexTrade Pro - Real-Time Market Terminal & Price Alerts",
+  "description": "แพลตฟอร์มเทรดและวิเคราะห์กราฟเรียลไทม์ หุ้น ทองคำ เงิน คริปโต (Bitcoin) พร้อมระบบแจ้งเตือนราคาและจำลองพอร์ต",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
