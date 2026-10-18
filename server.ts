@@ -69,31 +69,83 @@ Output ONLY a valid JSON array without markdown ticks or additional commentary.`
       const groundingMetadata = candidate?.groundingMetadata;
       const groundingChunks: any[] = groundingMetadata?.groundingChunks || [];
 
-      const extractDomain = (urlStr: string): string => {
+      // Log one sample groundingChunk to the server console so user can inspect the real shape
+      if (groundingChunks.length > 0) {
+        console.log('Sample groundingChunk:', JSON.stringify(groundingChunks[0], null, 2));
+      }
+
+      // Helper to extract the main domain name before TLD (e.g. "reuters" from "reuters.com" or "uk.reuters.com")
+      const extractMainName = (input: string): string => {
+        if (!input || typeof input !== 'string') return '';
+        let str = input.trim().toLowerCase();
+
+        // If it starts with http:// or https://, parse hostname
         try {
-          const u = new URL(urlStr);
-          return u.hostname.replace(/^www\./, '').toLowerCase();
+          if (str.startsWith('http://') || str.startsWith('https://')) {
+            const u = new URL(str);
+            str = u.hostname;
+          }
         } catch {
-          return '';
+          // ignore parsing error, continue string cleanup
         }
+
+        // Clean protocol, path, query, port
+        str = str.replace(/^https?:\/\//i, '');
+        str = str.split('/')[0].split('?')[0].split(':')[0].trim();
+
+        // Strip site title suffixes if present (e.g. "Reuters - Latest..." -> "Reuters")
+        str = str.split(/\s*[-|:]\s*/)[0].trim();
+
+        // Strip leading www.
+        str = str.replace(/^www\./, '');
+
+        // If there are words or spaces, take first token
+        if (str.includes(' ')) {
+          str = str.split(' ')[0];
+        }
+        str = str.replace(/[^a-z0-9.-]/g, '');
+
+        if (!str) return '';
+
+        const parts = str.split('.').filter(Boolean);
+        if (parts.length === 0) return '';
+        if (parts.length === 1) return parts[0];
+
+        // Handle two-part ccTLDs (e.g. .co.uk, .com.au, .co.jp, .org.uk, .gov.uk, .co.th)
+        const TWO_PART_TLD_FIRST = new Set(['co', 'com', 'org', 'net', 'gov', 'edu', 'ac', 'go', 'or']);
+        const lastPart = parts[parts.length - 1];
+        const secondLast = parts[parts.length - 2];
+
+        if (parts.length >= 3 && lastPart.length === 2 && TWO_PART_TLD_FIRST.has(secondLast)) {
+          return parts[parts.length - 3];
+        }
+
+        // Standard: main domain is the second-to-last part (e.g. "reuters" from "reuters.com" or "uk.reuters.com")
+        return parts[parts.length - 2];
       };
 
-      const matchDomains = (d1: string, d2: string): boolean => {
-        if (!d1 || !d2) return false;
-        if (d1 === d2) return true;
-        if (d1.endsWith('.' + d2) || d2.endsWith('.' + d1)) return true;
-        return false;
+      const matchMainNames = (n1: string, n2: string): boolean => {
+        if (!n1 || !n2) return false;
+        if (n1 === n2) return true;
+        const clean1 = n1.replace(/[^a-z0-9]/g, '');
+        const clean2 = n2.replace(/[^a-z0-9]/g, '');
+        return Boolean(clean1 && clean2 && clean1 === clean2);
       };
 
-      const groundingSources: { title: string; url: string; domain: string }[] = [];
+      const groundingSources: { title: string; url: string; mainName: string }[] = [];
       for (const chunk of groundingChunks) {
         const uri = chunk?.web?.uri;
-        const title = chunk?.web?.title || '';
+        const rawDomain = chunk?.web?.domain;
+        const rawTitle = chunk?.web?.title || '';
+        const domainOrTitle = (typeof rawDomain === 'string' && rawDomain.trim())
+          ? rawDomain.trim()
+          : (typeof rawTitle === 'string' ? rawTitle.trim() : '');
+
         if (typeof uri === 'string' && uri.startsWith('http')) {
           groundingSources.push({
-            title,
-            url: uri,
-            domain: extractDomain(uri),
+            title: rawTitle || domainOrTitle || uri,
+            url: uri, // Keep web.uri as the clickable link
+            mainName: extractMainName(domainOrTitle),
           });
         }
       }
@@ -135,8 +187,8 @@ Output ONLY a valid JSON array without markdown ticks or additional commentary.`
           return true;
         })
         .map(item => {
-          const itemDomain = extractDomain(item.source_url);
-          const isVerified = groundingSources.some(gs => matchDomains(itemDomain, gs.domain));
+          const itemMainName = extractMainName(item.source_url);
+          const isVerified = Boolean(itemMainName) && groundingSources.some(gs => matchMainNames(itemMainName, gs.mainName));
           return {
             layer: item.layer,
             side: item.side,

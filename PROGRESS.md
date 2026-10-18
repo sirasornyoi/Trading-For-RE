@@ -12,7 +12,8 @@
 - [done] Express route `POST /api/analyze` with server-side Gemini 3.8 Flash & Google Search grounding
 - [done] Strict validation: drops any item whose layer, side, label, or tier is invalid (no defaults filled)
 - [done] Drops items without source_url or date
-- [done] Grounding source verification: domain matching between source_url and groundingChunks, returning verified flag and groundingSources list
+- [done] Grounding source verification: builds domain from `chunk.web.domain` or `chunk.web.title`, normalizes both sides, compares main name before TLD, returns `verified` flag, and keeps `web.uri` as clickable link
+- [done] Logs one sample `groundingChunk` to the server console for structure inspection
 - [done] TopNav "Analysis" view with asset selector, "My thesis" text box, submit button, and evidence list UI
 - [done] MarketAnalysisView displays red "ลิงก์ไม่พบในผลค้นหาจริง" badge for items where verified is false
 - [done] Cleaned up unused `src/components/AnalysisView.tsx`
