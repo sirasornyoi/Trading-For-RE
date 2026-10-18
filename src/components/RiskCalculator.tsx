@@ -177,36 +177,73 @@ export const RiskCalculator: React.FC<RiskCalculatorProps> = ({
   const microRiskUSD = riskDistance * microMultiplier;
   const microRiskPct = balanceNum > 0 ? (microRiskUSD / balanceNum) * 100 : 0;
 
-  // Fix 2: Tranche percentage validation (must equal exactly 100%)
+  // Tranche percentage validation (must equal exactly 100%)
   const t1Pct = parseFloat(tranche1Pct) || 0;
   const t2Pct = parseFloat(tranche2Pct) || 0;
   const t3Pct = trancheCount === 3 ? (parseFloat(tranche3Pct) || 0) : 0;
   const totalTranchePct = Math.round((t1Pct + t2Pct + t3Pct) * 100) / 100;
   const isTranchePctValid = totalTranchePct === 100;
 
-  // Fix 3: Tranche sizing in whole contracts and total risk from each tranche's entry to SL
   const t1Price = parseFloat(tranche1Price) || entryNum;
   const t2Price = parseFloat(tranche2Price) || entryNum;
   const t3Price = parseFloat(tranche3Price) || entryNum;
 
-  // Determine whole contracts per tranche
-  const c1 = isTranchePctValid && wholeContracts > 0 ? Math.round((wholeContracts * t1Pct) / 100) : 0;
-  const c2 = isTranchePctValid && wholeContracts > 0 ? Math.round((wholeContracts * t2Pct) / 100) : 0;
-  const c3 = isTranchePctValid && trancheCount === 3 && wholeContracts > 0
-    ? Math.round((wholeContracts * t3Pct) / 100)
-    : 0;
+  // Tranche sizing: wholeContracts must be at least trancheCount
+  const canAllocateTranches = isTranchePctValid && isValidSetup && wholeContracts >= trancheCount;
+  const isContractsTooSmallForTranches = isTranchePctValid && isValidSetup && wholeContracts < trancheCount;
 
-  const tranche1Risk = isTranchePctValid && isValidSetup && c1 > 0 ? c1 * Math.abs(t1Price - slNum) * contractMultiplier : 0;
-  const tranche2Risk = isTranchePctValid && isValidSetup && c2 > 0 ? c2 * Math.abs(t2Price - slNum) * contractMultiplier : 0;
-  const tranche3Risk = isTranchePctValid && isValidSetup && c3 > 0 ? c3 * Math.abs(t3Price - slNum) * contractMultiplier : 0;
+  // Largest remainder allocation so sum of tranches equals wholeContracts exactly
+  const { c1, c2, c3 } = useMemo(() => {
+    if (!canAllocateTranches) {
+      return { c1: 0, c2: 0, c3: 0 };
+    }
+
+    const tranches = [
+      { index: 0, pct: t1Pct },
+      { index: 1, pct: t2Pct },
+      ...(trancheCount === 3 ? [{ index: 2, pct: t3Pct }] : []),
+    ];
+
+    const allocated = tranches.map(t => {
+      const exact = (wholeContracts * t.pct) / 100;
+      const floored = Math.floor(exact);
+      const rem = Math.round((exact - floored) * 1000000) / 1000000;
+      return { index: t.index, floored, rem, contracts: floored };
+    });
+
+    const flooredSum = allocated.reduce((sum, t) => sum + t.floored, 0);
+    const leftover = wholeContracts - flooredSum;
+
+    const sortedIndices = [...allocated]
+      .sort((a, b) => b.rem - a.rem || a.index - b.index)
+      .map(t => t.index);
+
+    for (let i = 0; i < leftover; i++) {
+      const targetIdx = sortedIndices[i % sortedIndices.length];
+      const target = allocated.find(t => t.index === targetIdx);
+      if (target) {
+        target.contracts += 1;
+      }
+    }
+
+    return {
+      c1: allocated[0]?.contracts || 0,
+      c2: allocated[1]?.contracts || 0,
+      c3: allocated[2]?.contracts || 0,
+    };
+  }, [canAllocateTranches, wholeContracts, trancheCount, t1Pct, t2Pct, t3Pct]);
+
+  const tranche1Risk = canAllocateTranches && c1 > 0 ? c1 * Math.abs(t1Price - slNum) * contractMultiplier : 0;
+  const tranche2Risk = canAllocateTranches && c2 > 0 ? c2 * Math.abs(t2Price - slNum) * contractMultiplier : 0;
+  const tranche3Risk = canAllocateTranches && c3 > 0 ? c3 * Math.abs(t3Price - slNum) * contractMultiplier : 0;
 
   const totalTrancheRiskUSD = tranche1Risk + tranche2Risk + (trancheCount === 3 ? tranche3Risk : 0);
-  const doesTrancheRiskExceedBudget = isTranchePctValid && totalTrancheRiskUSD > riskBudgetUSD && riskBudgetUSD > 0;
+  const doesTrancheRiskExceedBudget = canAllocateTranches && totalTrancheRiskUSD > riskBudgetUSD && riskBudgetUSD > 0;
 
   const totalTrancheContracts = c1 + c2 + (trancheCount === 3 ? c3 : 0);
   const averageEntry = totalTrancheContracts > 0
     ? (t1Price * c1 + t2Price * c2 + (trancheCount === 3 ? t3Price * c3 : 0)) / totalTrancheContracts
-    : (t1Price * t1Pct + t2Price * t2Pct + (trancheCount === 3 ? t3Price * t3Pct : 0)) / 100;
+    : 0;
 
   return (
     <div className="max-w-5xl mx-auto p-4 lg:p-6 space-y-5">
@@ -458,7 +495,7 @@ export const RiskCalculator: React.FC<RiskCalculatorProps> = ({
               <div className="p-2.5 bg-slate-950 rounded-xl border border-slate-800 space-y-1.5">
                 <div className="flex justify-between items-center text-[10px] text-slate-400">
                   <span className="font-bold text-slate-300">ไม้ 1 (Tranche 1)</span>
-                  <span className="font-mono text-emerald-400">{isTranchePctValid && wholeContracts > 0 ? `${c1} สัญญา` : '--'}</span>
+                  <span className="font-mono text-emerald-400">{canAllocateTranches ? `${c1} สัญญา` : '--'}</span>
                 </div>
                 <div className="flex gap-1.5">
                   <input
@@ -479,7 +516,7 @@ export const RiskCalculator: React.FC<RiskCalculatorProps> = ({
                     <span className="absolute right-1 top-1 text-[10px] text-slate-500">%</span>
                   </div>
                 </div>
-                {isTranchePctValid && isValidSetup && c1 > 0 && (
+                {canAllocateTranches && c1 > 0 && (
                   <div className="text-[10px] font-mono text-slate-400 flex justify-between pt-0.5">
                     <span>ความเสี่ยง:</span>
                     <span className="text-rose-400">${tranche1Risk.toFixed(2)}</span>
@@ -490,7 +527,7 @@ export const RiskCalculator: React.FC<RiskCalculatorProps> = ({
               <div className="p-2.5 bg-slate-950 rounded-xl border border-slate-800 space-y-1.5">
                 <div className="flex justify-between items-center text-[10px] text-slate-400">
                   <span className="font-bold text-slate-300">ไม้ 2 (Tranche 2)</span>
-                  <span className="font-mono text-emerald-400">{isTranchePctValid && wholeContracts > 0 ? `${c2} สัญญา` : '--'}</span>
+                  <span className="font-mono text-emerald-400">{canAllocateTranches ? `${c2} สัญญา` : '--'}</span>
                 </div>
                 <div className="flex gap-1.5">
                   <input
@@ -511,7 +548,7 @@ export const RiskCalculator: React.FC<RiskCalculatorProps> = ({
                     <span className="absolute right-1 top-1 text-[10px] text-slate-500">%</span>
                   </div>
                 </div>
-                {isTranchePctValid && isValidSetup && c2 > 0 && (
+                {canAllocateTranches && c2 > 0 && (
                   <div className="text-[10px] font-mono text-slate-400 flex justify-between pt-0.5">
                     <span>ความเสี่ยง:</span>
                     <span className="text-rose-400">${tranche2Risk.toFixed(2)}</span>
@@ -523,7 +560,7 @@ export const RiskCalculator: React.FC<RiskCalculatorProps> = ({
                 <div className="p-2.5 bg-slate-950 rounded-xl border border-slate-800 space-y-1.5">
                   <div className="flex justify-between items-center text-[10px] text-slate-400">
                     <span className="font-bold text-slate-300">ไม้ 3 (Tranche 3)</span>
-                    <span className="font-mono text-emerald-400">{isTranchePctValid && wholeContracts > 0 ? `${c3} สัญญา` : '--'}</span>
+                    <span className="font-mono text-emerald-400">{canAllocateTranches ? `${c3} สัญญา` : '--'}</span>
                   </div>
                   <div className="flex gap-1.5">
                     <input
@@ -544,7 +581,7 @@ export const RiskCalculator: React.FC<RiskCalculatorProps> = ({
                       <span className="absolute right-1 top-1 text-[10px] text-slate-500">%</span>
                     </div>
                   </div>
-                  {isTranchePctValid && isValidSetup && c3 > 0 && (
+                  {canAllocateTranches && c3 > 0 && (
                     <div className="text-[10px] font-mono text-slate-400 flex justify-between pt-0.5">
                       <span>ความเสี่ยง:</span>
                       <span className="text-rose-400">${tranche3Risk.toFixed(2)}</span>
@@ -554,7 +591,7 @@ export const RiskCalculator: React.FC<RiskCalculatorProps> = ({
               )}
             </div>
 
-            {/* Fix 2: Percentage Total Error or Tranche Results */}
+            {/* Errors or Tranche Results */}
             {!isTranchePctValid ? (
               <div className="p-3 bg-rose-500/15 border border-rose-500/40 rounded-xl text-xs text-rose-300 flex items-center gap-2">
                 <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
@@ -562,7 +599,14 @@ export const RiskCalculator: React.FC<RiskCalculatorProps> = ({
                   ข้อผิดพลาด: สัดส่วนเปอร์เซ็นต์รวมต้องเท่ากับ 100% พอดี (ปัจจุบันรวมได้: {totalTranchePct}%)
                 </span>
               </div>
-            ) : (
+            ) : isContractsTooSmallForTranches ? (
+              <div className="p-3 bg-rose-500/15 border border-rose-500/40 rounded-xl text-xs text-rose-300 flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                <span>
+                  สัญญาไม่พอแบ่ง {trancheCount} ไม้ — เปิดได้ {wholeContracts} สัญญา
+                </span>
+              </div>
+            ) : canAllocateTranches ? (
               <div className="space-y-2">
                 <div className="p-2.5 bg-slate-950 rounded-xl border border-slate-800 flex items-center justify-between text-xs font-mono">
                   <span className="text-slate-400 font-sans">ราคาเฉลี่ยรวมทุกไม้ (Average Entry):</span>
@@ -578,7 +622,7 @@ export const RiskCalculator: React.FC<RiskCalculatorProps> = ({
                   </span>
                 </div>
 
-                {/* Fix 3 Warning: If total tranche risk exceeds risk budget */}
+                {/* Warning: If total tranche risk exceeds risk budget */}
                 {doesTrancheRiskExceedBudget && (
                   <div className="p-3 bg-rose-500/15 border border-rose-500/40 rounded-xl text-xs text-rose-300 space-y-1">
                     <div className="flex items-center gap-1.5 font-bold text-rose-400">
@@ -588,7 +632,7 @@ export const RiskCalculator: React.FC<RiskCalculatorProps> = ({
                   </div>
                 )}
               </div>
-            )}
+            ) : null}
           </div>
         </div>
 
