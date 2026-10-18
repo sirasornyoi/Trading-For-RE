@@ -21,6 +21,50 @@ import {
   Sparkles
 } from 'lucide-react';
 
+export interface VisiblePriceRange {
+  minPrice: number;
+  maxPrice: number;
+  maxVolume: number;
+  paddedRange: number;
+}
+
+export function computeVisiblePriceRange(
+  visibleCandles: Candle[],
+  symbolAlerts: PriceAlert[]
+): VisiblePriceRange {
+  let minPrice = Infinity;
+  let maxPrice = -Infinity;
+  let maxVolume = 0;
+
+  visibleCandles.forEach(c => {
+    if (c.low < minPrice) minPrice = c.low;
+    if (c.high > maxPrice) maxPrice = c.high;
+    if (c.volume > maxVolume) maxVolume = c.volume;
+  });
+
+  if (minPrice === Infinity || maxPrice === -Infinity) {
+    return { minPrice: 0, maxPrice: 100, maxVolume: 0, paddedRange: 100 };
+  }
+
+  // Also include active alert prices in the range if nearby to avoid clipping
+  symbolAlerts.forEach(a => {
+    if (a.targetPrice < minPrice && minPrice - a.targetPrice < (maxPrice - minPrice) * 0.3) {
+      minPrice = a.targetPrice;
+    }
+    if (a.targetPrice > maxPrice && a.targetPrice - maxPrice < (maxPrice - minPrice) * 0.3) {
+      maxPrice = a.targetPrice;
+    }
+  });
+
+  // Add padding to price range
+  const priceRange = maxPrice - minPrice || 1;
+  minPrice -= priceRange * 0.05;
+  maxPrice += priceRange * 0.05;
+  const paddedRange = maxPrice - minPrice;
+
+  return { minPrice, maxPrice, maxVolume, paddedRange };
+}
+
 interface TradingChartProps {
   candles: Candle[];
   symbol: string;
@@ -78,7 +122,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
   const [isDrawingSr, setIsDrawingSr] = useState<boolean>(false);
   const [showSrPanel, setShowSrPanel] = useState<boolean>(false);
 
-  // S/R Touches calculation: candle whose high-low range crosses the level within ±0.3%
+  // S/R Touches calculation: group consecutive candles that touch the level into ONE touch
   const srTouches = useMemo(() => {
     if (srLevel === null || candles.length === 0) return [];
     const tolerance = srLevel * 0.003;
@@ -87,38 +131,76 @@ export const TradingChart: React.FC<TradingChartProps> = ({
 
     const list: Array<{
       index: number;
-      time: number;
-      dateStr: string;
-      volume: number;
+      startTime: number;
+      startDateStr: string;
+      candleCount: number;
+      totalVolume: number;
+      maxRange: number;
       high: number;
       low: number;
-      range: number;
     }> = [];
 
-    candles.forEach((c, idx) => {
-      if (c.low <= maxL && c.high >= minL) {
-        const d = new Date(c.time * 1000);
-        const yyyy = d.getFullYear();
-        const mm = String(d.getMonth() + 1).padStart(2, '0');
-        const dd = String(d.getDate()).padStart(2, '0');
-        const hh = String(d.getHours()).padStart(2, '0');
-        const min = String(d.getMinutes()).padStart(2, '0');
-        list.push({
-          index: idx,
-          time: c.time,
-          dateStr: `${yyyy}-${mm}-${dd} ${hh}:${min}`,
-          volume: c.volume,
-          high: c.high,
-          low: c.low,
-          range: c.high - c.low,
-        });
+    let currentGroup: {
+      startTime: number;
+      startDateStr: string;
+      candleCount: number;
+      totalVolume: number;
+      maxRange: number;
+      high: number;
+      low: number;
+    } | null = null;
+
+    for (let i = 0; i < candles.length; i++) {
+      const c = candles[i];
+      const touches = c.low <= maxL && c.high >= minL;
+
+      if (touches) {
+        const range = c.high - c.low;
+        if (!currentGroup) {
+          const d = new Date(c.time * 1000);
+          const yyyy = d.getFullYear();
+          const mm = String(d.getMonth() + 1).padStart(2, '0');
+          const dd = String(d.getDate()).padStart(2, '0');
+          const hh = String(d.getHours()).padStart(2, '0');
+          const min = String(d.getMinutes()).padStart(2, '0');
+          currentGroup = {
+            startTime: c.time,
+            startDateStr: `${yyyy}-${mm}-${dd} ${hh}:${min}`,
+            candleCount: 1,
+            totalVolume: c.volume || 0,
+            maxRange: range,
+            high: c.high,
+            low: c.low,
+          };
+        } else {
+          currentGroup.candleCount += 1;
+          currentGroup.totalVolume += c.volume || 0;
+          currentGroup.maxRange = Math.max(currentGroup.maxRange, range);
+          currentGroup.high = Math.max(currentGroup.high, c.high);
+          currentGroup.low = Math.min(currentGroup.low, c.low);
+        }
+      } else {
+        if (currentGroup) {
+          list.push({
+            index: list.length,
+            ...currentGroup,
+          });
+          currentGroup = null;
+        }
       }
-    });
+    }
+
+    if (currentGroup) {
+      list.push({
+        index: list.length,
+        ...currentGroup,
+      });
+    }
 
     return list;
   }, [candles, srLevel]);
 
-  // S/R Strength Assessment: Compare last 3 touches (Never use touch count as strength)
+  // S/R Strength Assessment: Compare last 3 touches using grouped values (Never use touch count as strength)
   const srAssessment = useMemo(() => {
     if (srTouches.length < 3) {
       return {
@@ -132,17 +214,17 @@ export const TradingChart: React.FC<TradingChartProps> = ({
     const [t1, t2, t3] = last3;
 
     // volume AND range rising → "Level อ่อนลง"
-    const isVolRising = t3.volume > t2.volume && t2.volume > t1.volume;
-    const isRangeRising = t3.range > t2.range && t2.range > t1.range;
+    const isVolRising = t3.totalVolume > t2.totalVolume && t2.totalVolume > t1.totalVolume;
+    const isRangeRising = t3.maxRange > t2.maxRange && t2.maxRange > t1.maxRange;
 
     // volume falling → "Level ยังแข็ง"
-    const isVolFalling = t3.volume < t2.volume && t2.volume < t1.volume;
+    const isVolFalling = t3.totalVolume < t2.totalVolume && t2.totalVolume < t1.totalVolume;
 
     if (isVolRising && isRangeRising) {
       return {
         status: 'weak',
         text: 'Level อ่อนลง',
-        detail: 'Volume และ Range เพิ่มขึ้นต่อเนื่องในการทดสอบ 3 ครั้งล่าสุด (แรงทะลุเพิ่มขึ้น)',
+        detail: 'Volume รวม และ Max Range เพิ่มขึ้นต่อเนื่องในการทดสอบ 3 ครั้งล่าสุด (แรงทะลุเพิ่มขึ้น)',
       };
     }
 
@@ -150,14 +232,14 @@ export const TradingChart: React.FC<TradingChartProps> = ({
       return {
         status: 'strong',
         text: 'Level ยังแข็ง',
-        detail: 'Volume ลดลงต่อเนื่องในการทดสอบ 3 ครั้งล่าสุด (แรงกดดันลดลง แนวรับ/ต้านยังต้านอยู่)',
+        detail: 'Volume รวมลดลงต่อเนื่องในการทดสอบ 3 ครั้งล่าสุด (แรงกดดันลดลง แนวรับ/ต้านยังต้านอยู่)',
       };
     }
 
     return {
       status: 'neutral',
       text: 'รอสัญญาณยืนยัน',
-      detail: 'แนวโน้ม Volume และ Range ของ 3 ครั้งล่าสุดยังไม่เข้าเกณฑ์ชัดเจน',
+      detail: 'แนวโน้ม Volume รวม และ Max Range ของ 3 ครั้งล่าสุดยังไม่เข้าเกณฑ์ชัดเจน',
     };
   }, [srTouches]);
 
@@ -235,32 +317,8 @@ export const TradingChart: React.FC<TradingChartProps> = ({
     const slotWidth = chartWidth / candleCount;
     const candleWidth = Math.max(2 * dpr, slotWidth * 0.72);
 
-    // Calculate visible Price Range (Min & Max)
-    let minPrice = Infinity;
-    let maxPrice = -Infinity;
-    let maxVolume = 0;
-
-    visibleCandles.forEach(c => {
-      if (c.low < minPrice) minPrice = c.low;
-      if (c.high > maxPrice) maxPrice = c.high;
-      if (c.volume > maxVolume) maxVolume = c.volume;
-    });
-
-    // Also include active alert prices in the range if nearby to avoid clipping
-    symbolAlerts.forEach(a => {
-      if (a.targetPrice < minPrice && minPrice - a.targetPrice < (maxPrice - minPrice) * 0.3) {
-        minPrice = a.targetPrice;
-      }
-      if (a.targetPrice > maxPrice && a.targetPrice - maxPrice < (maxPrice - minPrice) * 0.3) {
-        maxPrice = a.targetPrice;
-      }
-    });
-
-    // Add padding to price range
-    const priceRange = maxPrice - minPrice || 1;
-    minPrice -= priceRange * 0.05;
-    maxPrice += priceRange * 0.05;
-    const paddedRange = maxPrice - minPrice;
+    // Calculate visible Price Range (Min & Max) using shared function
+    const { minPrice, maxPrice, maxVolume, paddedRange } = computeVisiblePriceRange(visibleCandles, symbolAlerts);
 
     const priceToY = (price: number) => {
       return chartHeight - ((price - minPrice) / paddedRange) * chartHeight;
@@ -960,19 +1018,13 @@ export const TradingChart: React.FC<TradingChartProps> = ({
     const dpr = window.devicePixelRatio || 1;
     const clickY = (e.clientY - rect.top) * dpr;
     
-    // Calculate price at Y coordinate
-    let minPrice = Infinity;
-    let maxPrice = -Infinity;
-    visibleCandles.forEach(c => {
-      if (c.low < minPrice) minPrice = c.low;
-      if (c.high > maxPrice) maxPrice = c.high;
-    });
-    const priceRange = maxPrice - minPrice || 1;
-    minPrice -= priceRange * 0.05;
-    maxPrice += priceRange * 0.05;
-    const chartHeight = canvas.height - 25 * dpr;
+    const bottomPadding = 25 * dpr;
+    const chartHeight = canvas.height - bottomPadding;
 
-    const clickedPrice = minPrice + (1 - clickY / chartHeight) * (maxPrice - minPrice);
+    if (clickY > chartHeight || visibleCandles.length === 0) return;
+
+    const { minPrice, paddedRange } = computeVisiblePriceRange(visibleCandles, symbolAlerts);
+    const clickedPrice = minPrice + (1 - clickY / chartHeight) * paddedRange;
     if (clickedPrice > 0 && clickY <= chartHeight) {
       if (isDrawingSr) {
         setSrLevel(Number(clickedPrice.toFixed(decimals)));
@@ -1371,29 +1423,34 @@ export const TradingChart: React.FC<TradingChartProps> = ({
                     const isLast3 = originalIdx >= srTouches.length - 3;
                     return (
                       <div
-                        key={touch.time}
-                        className={`p-2 rounded-lg border text-[11px] font-mono ${
+                        key={`${touch.startTime}-${originalIdx}`}
+                        className={`p-2.5 rounded-lg border text-[11px] font-mono ${
                           isLast3
                             ? 'bg-slate-900 border-cyan-500/40 text-slate-200'
                             : 'bg-slate-900/50 border-slate-800/80 text-slate-400'
                         }`}
                       >
-                        <div className="flex items-center justify-between mb-0.5">
+                        <div className="flex items-center justify-between mb-1">
                           <span className="font-semibold text-slate-300 font-sans">
-                            #{originalIdx + 1} {touch.dateStr}
+                            #{originalIdx + 1} {touch.startDateStr}
                           </span>
-                          {isLast3 && (
-                            <span className="text-[9px] px-1 py-0.2 rounded bg-cyan-500/20 text-cyan-300 font-sans font-semibold">
-                              3 ครั้งล่าสุด
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-800 text-cyan-300 font-sans font-medium">
+                              {touch.candleCount} แท่ง
                             </span>
-                          )}
+                            {isLast3 && (
+                              <span className="text-[9px] px-1 py-0.2 rounded bg-cyan-500/20 text-cyan-300 font-sans font-semibold">
+                                3 ครั้งล่าสุด
+                              </span>
+                            )}
+                          </div>
                         </div>
                         <div className="flex items-center justify-between text-[10px] text-slate-400">
-                          <span>Vol: <span className="text-white font-mono">{touch.volume.toLocaleString()}</span></span>
-                          <span>Range: <span className="text-white font-mono">{touch.range.toFixed(decimals)}</span></span>
+                          <span>Vol รวม: <span className="text-white font-mono">{Math.round(touch.totalVolume).toLocaleString()}</span></span>
+                          <span>Max Range: <span className="text-white font-mono">{touch.maxRange.toFixed(decimals)}</span></span>
                         </div>
-                        <div className="text-[9px] text-slate-400 mt-0.5">
-                          H: {touch.high.toFixed(decimals)} | L: {touch.low.toFixed(decimals)}
+                        <div className="text-[9px] text-slate-500 mt-0.5">
+                          High: {touch.high.toFixed(decimals)} | Low: {touch.low.toFixed(decimals)}
                         </div>
                       </div>
                     );
