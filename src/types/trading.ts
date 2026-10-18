@@ -58,6 +58,11 @@ export interface PriceAlert {
   armed?: boolean;
 }
 
+export interface GroundingSource {
+  title: string;
+  url: string;
+}
+
 export interface EvidenceItem {
   layer: 'Fundamental' | 'Technical' | 'News';
   side: 'bull' | 'bear';
@@ -69,4 +74,6 @@ export interface EvidenceItem {
   date: string;
   mechanism: string;
   side_basis: 'self-evident' | 'placed by model';
+  verified: boolean;
 }
+

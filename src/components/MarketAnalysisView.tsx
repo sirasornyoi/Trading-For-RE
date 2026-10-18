@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { Asset, EvidenceItem } from '../types/trading';
-import { Sparkles, Search, ExternalLink, AlertCircle, ArrowUpRight, ArrowDownRight, Layers, Calendar, CheckCircle2 } from 'lucide-react';
+import { Asset, EvidenceItem, GroundingSource } from '../types/trading';
+import { Sparkles, Search, ExternalLink, AlertCircle, ArrowUpRight, ArrowDownRight, Layers, Calendar, CheckCircle2, ShieldAlert, Globe } from 'lucide-react';
 
 interface MarketAnalysisViewProps {
   assets: Asset[];
@@ -17,6 +17,7 @@ export const MarketAnalysisView: React.FC<MarketAnalysisViewProps> = ({
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [items, setItems] = useState<EvidenceItem[]>([]);
+  const [groundingSources, setGroundingSources] = useState<GroundingSource[]>([]);
   const [hasSearched, setHasSearched] = useState<boolean>(false);
 
   const currentAsset = assets.find(a => a.symbol === selectedSymbol) || assets[0];
@@ -48,10 +49,12 @@ export const MarketAnalysisView: React.FC<MarketAnalysisViewProps> = ({
       }
 
       setItems(data.items || []);
+      setGroundingSources(data.groundingSources || []);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'เกิดข้อผิดพลาดในการเชื่อมต่อเซิร์ฟเวอร์';
       setError(msg);
       setItems([]);
+      setGroundingSources([]);
     } finally {
       setLoading(false);
     }
@@ -236,6 +239,14 @@ export const MarketAnalysisView: React.FC<MarketAnalysisViewProps> = ({
                       <span className="text-[10px] text-slate-400 font-mono">
                         ({item.side_basis})
                       </span>
+
+                      {/* Verification Status */}
+                      {item.verified === false && (
+                        <span className="px-2 py-0.5 rounded-md font-bold text-[10px] bg-rose-500/20 text-rose-300 border border-rose-500/40 flex items-center gap-1">
+                          <AlertCircle className="w-3 h-3 text-rose-400" />
+                          ลิงก์ไม่พบในผลค้นหาจริง
+                        </span>
+                      )}
                     </div>
 
                     {/* Date */}
@@ -267,21 +278,54 @@ export const MarketAnalysisView: React.FC<MarketAnalysisViewProps> = ({
                       <span className="font-semibold text-slate-200">{item.source_name}</span>
                     </div>
 
-                    <a
-                      href={item.source_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-cyan-400 hover:text-cyan-300 flex items-center gap-1 font-mono transition-colors"
-                      title={item.source_url}
-                    >
-                      <span>เปิดลิงก์แหล่งที่มา</span>
-                      <ExternalLink className="w-3 h-3" />
-                    </a>
+                    <div className="flex items-center gap-2">
+                      {item.verified === false && (
+                        <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-rose-950/80 text-rose-300 border border-rose-800/80 flex items-center gap-1">
+                          <AlertCircle className="w-3 h-3 text-rose-400" />
+                          ลิงก์ไม่พบในผลค้นหาจริง
+                        </span>
+                      )}
+                      <a
+                        href={item.source_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-cyan-400 hover:text-cyan-300 flex items-center gap-1 font-mono transition-colors"
+                        title={item.source_url}
+                      >
+                        <span>เปิดลิงก์แหล่งที่มา</span>
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    </div>
                   </div>
                 </div>
               );
             })}
           </div>
+
+          {/* Grounding Sources Summary */}
+          {groundingSources.length > 0 && (
+            <div className="mt-5 bg-slate-950/80 border border-slate-800 rounded-xl p-4 text-xs">
+              <div className="flex items-center gap-2 text-slate-300 font-semibold mb-2.5">
+                <Globe className="w-4 h-4 text-cyan-400" />
+                <span>แหล่งข้อมูลค้นหาจริงจาก Google Search Grounding ({groundingSources.length} แหล่ง):</span>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {groundingSources.map((gs, idx) => (
+                  <a
+                    key={idx}
+                    href={gs.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-850 border border-slate-800 hover:border-slate-700 text-slate-300 hover:text-cyan-400 transition-colors text-[11px] font-mono truncate max-w-xs"
+                    title={gs.title || gs.url}
+                  >
+                    <ExternalLink className="w-3 h-3 shrink-0 text-slate-500" />
+                    <span className="truncate">{gs.title || gs.url}</span>
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 

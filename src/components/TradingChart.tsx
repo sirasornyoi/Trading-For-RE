@@ -131,7 +131,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
       if (i >= period - 1) {
         ma.push(sum / period);
       } else {
-        ma.push(sum / (i + 1));
+        ma.push(null);
       }
     }
     return ma;

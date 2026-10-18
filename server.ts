@@ -65,6 +65,39 @@ Output ONLY a valid JSON array without markdown ticks or additional commentary.`
         },
       });
 
+      const candidate = response.candidates?.[0];
+      const groundingMetadata = candidate?.groundingMetadata;
+      const groundingChunks: any[] = groundingMetadata?.groundingChunks || [];
+
+      const extractDomain = (urlStr: string): string => {
+        try {
+          const u = new URL(urlStr);
+          return u.hostname.replace(/^www\./, '').toLowerCase();
+        } catch {
+          return '';
+        }
+      };
+
+      const matchDomains = (d1: string, d2: string): boolean => {
+        if (!d1 || !d2) return false;
+        if (d1 === d2) return true;
+        if (d1.endsWith('.' + d2) || d2.endsWith('.' + d1)) return true;
+        return false;
+      };
+
+      const groundingSources: { title: string; url: string; domain: string }[] = [];
+      for (const chunk of groundingChunks) {
+        const uri = chunk?.web?.uri;
+        const title = chunk?.web?.title || '';
+        if (typeof uri === 'string' && uri.startsWith('http')) {
+          groundingSources.push({
+            title,
+            url: uri,
+            domain: extractDomain(uri),
+          });
+        }
+      }
+
       let rawItems: any[] = [];
       const text = response.text || '';
       try {
@@ -83,35 +116,46 @@ Output ONLY a valid JSON array without markdown ticks or additional commentary.`
         rawItems = [];
       }
 
-      // Requirement 3: drop any item without source_url or date before returning
+      const ALLOWED_LAYERS = new Set(['Fundamental', 'Technical', 'News']);
+      const ALLOWED_SIDES = new Set(['bull', 'bear']);
+      const ALLOWED_LABELS = new Set(['FACT', 'INFER', 'SPEC']);
+      const ALLOWED_TIERS = new Set(['T1', 'T2', 'T3']);
+
+      // 1. Validation: DROP any item whose layer, side, label or tier is not one of the allowed values.
+      // Never fill in defaults. Also drop items without source_url or date.
       const validItems = rawItems
         .filter(item => {
-          return (
-            item &&
-            typeof item.source_url === 'string' &&
-            item.source_url.trim().length > 0 &&
-            item.source_url.startsWith('http') &&
-            typeof item.date === 'string' &&
-            item.date.trim().length > 0
-          );
+          if (!item || typeof item !== 'object') return false;
+          if (!ALLOWED_LAYERS.has(item.layer)) return false;
+          if (!ALLOWED_SIDES.has(item.side)) return false;
+          if (!ALLOWED_LABELS.has(item.label)) return false;
+          if (!ALLOWED_TIERS.has(item.tier)) return false;
+          if (typeof item.source_url !== 'string' || !item.source_url.trim().startsWith('http')) return false;
+          if (typeof item.date !== 'string' || !item.date.trim()) return false;
+          return true;
         })
         .map(item => {
-          const isFact = item.label === 'FACT';
+          const itemDomain = extractDomain(item.source_url);
+          const isVerified = groundingSources.some(gs => matchDomains(itemDomain, gs.domain));
           return {
-            layer: ['Fundamental', 'Technical', 'News'].includes(item.layer) ? item.layer : 'Fundamental',
-            side: item.side === 'bear' ? 'bear' : 'bull',
-            label: ['FACT', 'INFER', 'SPEC'].includes(item.label) ? item.label : (isFact ? 'FACT' : 'INFER'),
-            tier: ['T1', 'T2', 'T3'].includes(item.tier) ? item.tier : 'T2',
+            layer: item.layer,
+            side: item.side,
+            label: item.label,
+            tier: item.tier,
             value: String(item.value || ''),
-            source_name: String(item.source_name || 'Market Source'),
+            source_name: String(item.source_name || ''),
             source_url: String(item.source_url),
             date: String(item.date),
             mechanism: String(item.mechanism || ''),
-            side_basis: isFact ? 'self-evident' : 'placed by model',
+            side_basis: item.label === 'FACT' ? 'self-evident' : 'placed by model',
+            verified: isVerified,
           };
         });
 
-      return res.json({ items: validItems });
+      return res.json({
+        items: validItems,
+        groundingSources: groundingSources.map(s => ({ title: s.title, url: s.url })),
+      });
     } catch (err: any) {
       console.error('API /api/analyze error:', err);
       return res.status(500).json({ error: err.message || 'Analysis failed' });
