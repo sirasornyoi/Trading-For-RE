@@ -15,7 +15,6 @@ export const RiskCalculator: React.FC<RiskCalculatorProps> = ({
   const [side, setSide] = useState<'buy' | 'sell'>('buy');
   const [accountBalance, setAccountBalance] = useState<string>('50000');
   const [riskPercent, setRiskPercent] = useState<string>('2');
-  const [leverage, setLeverage] = useState<string>(''); // User input only, no default 10
 
   // Contract specification
   const isSilver = selectedSymbol === 'SI1!' || selectedSymbol === 'XAG/USD';
@@ -72,11 +71,11 @@ export const RiskCalculator: React.FC<RiskCalculatorProps> = ({
     return '';
   });
 
-  // Tranche Planner state: 2 or 3 tranches
-  const [trancheCount, setTrancheCount] = useState<2 | 3>(2);
-  const [tranche1Pct, setTranche1Pct] = useState<string>('50');
-  const [tranche2Pct, setTranche2Pct] = useState<string>('50');
-  const [tranche3Pct, setTranche3Pct] = useState<string>('20');
+  // Tranche Planner state: 2 or 3 tranches (Fix 2: default 3 tranches to 40/30/30, 2 tranches to 50/50)
+  const [trancheCount, setTrancheCount] = useState<2 | 3>(3);
+  const [tranche1Pct, setTranche1Pct] = useState<string>('40');
+  const [tranche2Pct, setTranche2Pct] = useState<string>('30');
+  const [tranche3Pct, setTranche3Pct] = useState<string>('30');
   const [tranche1Price, setTranche1Price] = useState<string>(entryPrice);
   const [tranche2Price, setTranche2Price] = useState<string>('');
   const [tranche3Price, setTranche3Price] = useState<string>('');
@@ -147,47 +146,67 @@ export const RiskCalculator: React.FC<RiskCalculatorProps> = ({
   const riskBudgetUSD = balanceNum > 0 && riskPctNum > 0 ? (balanceNum * (riskPctNum / 100)) : 0;
   const riskDistance = isValidSetup ? Math.abs(entryNum - slNum) : 0;
 
-  // R/R calculation helper
+  // Fix 1: Round R/R to 2 decimals before comparing: Math.round(rr * 100) / 100 >= 3
   const calculateRR = (tp: number) => {
     if (!isValidSetup || tp <= 0 || riskDistance <= 0) return null;
     const rewardDistance = side === 'buy' ? (tp - entryNum) : (entryNum - tp);
     if (rewardDistance <= 0) return 0;
-    return rewardDistance / riskDistance;
+    const rawRR = rewardDistance / riskDistance;
+    return Math.round(rawRR * 100) / 100;
   };
 
   const rr1 = calculateRR(tp1Num);
   const rr2 = calculateRR(tp2Num);
   const rr3 = calculateRR(tp3Num);
 
-  // Contract position sizing (Requirement 4)
+  // Position Sizing in whole contracts
   const riskPer1Contract = isValidSetup ? riskDistance * contractMultiplier : 0;
   const wholeContracts = (riskPer1Contract > 0 && riskBudgetUSD > 0)
     ? Math.floor(riskBudgetUSD / riskPer1Contract)
     : 0;
 
   const isRiskTooSmallFor1Contract = isValidSetup && riskPer1Contract > 0 && riskBudgetUSD < riskPer1Contract;
-  const actualRisk1ContractUSD = riskPer1Contract;
-  const actualRisk1ContractPct = balanceNum > 0 ? (actualRisk1ContractUSD / balanceNum) * 100 : 0;
 
-  // Tranche Planner Math (Requirement 5)
+  // Fix 4: Fact calculations for 1 Standard contract and 1 Micro contract
+  const standardMultiplier = isSilver ? 5000 : isGold ? 100 : 1;
+  const microMultiplier = isSilver ? 1000 : isGold ? 10 : 0.1;
+
+  const stdRiskUSD = riskDistance * standardMultiplier;
+  const stdRiskPct = balanceNum > 0 ? (stdRiskUSD / balanceNum) * 100 : 0;
+
+  const microRiskUSD = riskDistance * microMultiplier;
+  const microRiskPct = balanceNum > 0 ? (microRiskUSD / balanceNum) * 100 : 0;
+
+  // Fix 2: Tranche percentage validation (must equal exactly 100%)
   const t1Pct = parseFloat(tranche1Pct) || 0;
   const t2Pct = parseFloat(tranche2Pct) || 0;
   const t3Pct = trancheCount === 3 ? (parseFloat(tranche3Pct) || 0) : 0;
-  const totalTranchePct = t1Pct + t2Pct + t3Pct;
+  const totalTranchePct = Math.round((t1Pct + t2Pct + t3Pct) * 100) / 100;
+  const isTranchePctValid = totalTranchePct === 100;
 
+  // Fix 3: Tranche sizing in whole contracts and total risk from each tranche's entry to SL
   const t1Price = parseFloat(tranche1Price) || entryNum;
   const t2Price = parseFloat(tranche2Price) || entryNum;
   const t3Price = parseFloat(tranche3Price) || entryNum;
 
-  const hasTranchePrices = t1Price > 0 && t2Price > 0 && (trancheCount === 2 || t3Price > 0);
-  const averageEntry = hasTranchePrices && totalTranchePct > 0
-    ? (t1Price * t1Pct + t2Price * t2Pct + (trancheCount === 3 ? t3Price * t3Pct : 0)) / totalTranchePct
-    : entryNum;
+  // Determine whole contracts per tranche
+  const c1 = isTranchePctValid && wholeContracts > 0 ? Math.round((wholeContracts * t1Pct) / 100) : 0;
+  const c2 = isTranchePctValid && wholeContracts > 0 ? Math.round((wholeContracts * t2Pct) / 100) : 0;
+  const c3 = isTranchePctValid && trancheCount === 3 && wholeContracts > 0
+    ? Math.round((wholeContracts * t3Pct) / 100)
+    : 0;
 
-  const trancheAvgRiskDist = slNum > 0 && averageEntry > 0 ? Math.abs(averageEntry - slNum) : 0;
-  const trancheTotalRiskUSD = wholeContracts > 0
-    ? trancheAvgRiskDist * contractMultiplier * wholeContracts
-    : (isRiskTooSmallFor1Contract ? trancheAvgRiskDist * contractMultiplier * 1 : 0);
+  const tranche1Risk = isTranchePctValid && isValidSetup && c1 > 0 ? c1 * Math.abs(t1Price - slNum) * contractMultiplier : 0;
+  const tranche2Risk = isTranchePctValid && isValidSetup && c2 > 0 ? c2 * Math.abs(t2Price - slNum) * contractMultiplier : 0;
+  const tranche3Risk = isTranchePctValid && isValidSetup && c3 > 0 ? c3 * Math.abs(t3Price - slNum) * contractMultiplier : 0;
+
+  const totalTrancheRiskUSD = tranche1Risk + tranche2Risk + (trancheCount === 3 ? tranche3Risk : 0);
+  const doesTrancheRiskExceedBudget = isTranchePctValid && totalTrancheRiskUSD > riskBudgetUSD && riskBudgetUSD > 0;
+
+  const totalTrancheContracts = c1 + c2 + (trancheCount === 3 ? c3 : 0);
+  const averageEntry = totalTrancheContracts > 0
+    ? (t1Price * c1 + t2Price * c2 + (trancheCount === 3 ? t3Price * c3 : 0)) / totalTrancheContracts
+    : (t1Price * t1Pct + t2Price * t2Pct + (trancheCount === 3 ? t3Price * t3Pct : 0)) / 100;
 
   return (
     <div className="max-w-5xl mx-auto p-4 lg:p-6 space-y-5">
@@ -199,7 +218,7 @@ export const RiskCalculator: React.FC<RiskCalculatorProps> = ({
             <span>เครื่องคำนวณความเสี่ยงและขนาดสัญญา (Risk & Position Sizing Calculator)</span>
           </h2>
           <p className="text-xs text-slate-400 mt-1">
-            ควบคุมความเสี่ยงตามกฎ R:R ขั้นต่ำ 1:3 คำนวณสัญญาเต็ม COMEX / Micro และวางแผนแบ่งไม้เข้าเทรด (Tranches)
+            เกณฑ์ R:R ขั้นต่ำ 1:3 คำนวณสัญญาเต็ม COMEX / Micro และวางแผนแบ่งไม้เข้าเทรด (Tranches)
           </p>
         </div>
       </div>
@@ -320,7 +339,7 @@ export const RiskCalculator: React.FC<RiskCalculatorProps> = ({
             </div>
           )}
 
-          {/* Entry and Stop Loss (Leave empty if no price data) */}
+          {/* Entry and Stop Loss (Rule 7: Leave empty if no price data) */}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-xs text-slate-300 block mb-1 font-semibold">
@@ -358,7 +377,7 @@ export const RiskCalculator: React.FC<RiskCalculatorProps> = ({
             </div>
           )}
 
-          {/* Rule 2: Support TP1, TP2, TP3 */}
+          {/* Support TP1, TP2, TP3 */}
           <div className="space-y-2 pt-2 border-t border-slate-800">
             <span className="text-xs font-semibold text-slate-300 block">
               เป้าหมายทำกำไร (Take Profit Targets):
@@ -400,22 +419,7 @@ export const RiskCalculator: React.FC<RiskCalculatorProps> = ({
             </div>
           </div>
 
-          {/* Rule 6: Leverage is user input only, no default 10 and no word "แนะนำ" */}
-          <div className="pt-2 border-t border-slate-800">
-            <label className="text-xs text-slate-400 block mb-1">
-              อัตราทด (Leverage - กรอกตัวเลข):
-            </label>
-            <input
-              type="number"
-              min="1"
-              value={leverage}
-              onChange={(e) => setLeverage(e.target.value)}
-              placeholder="1 (ไม่บังคับ)"
-              className="w-32 px-3 py-1.5 bg-slate-950 border border-slate-700 rounded-lg text-white font-mono text-xs focus:outline-none focus:border-amber-500"
-            />
-          </div>
-
-          {/* Rule 5: Tranche Planner (Split position into 2–3 entries) */}
+          {/* Fix 2 & Fix 3: Tranche Planner (Split position into 2–3 entries) */}
           <div className="pt-3 border-t border-slate-800 space-y-2.5">
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
@@ -430,9 +434,9 @@ export const RiskCalculator: React.FC<RiskCalculatorProps> = ({
                     setTranche1Pct('50');
                     setTranche2Pct('50');
                   }}
-                  className={`px-2 py-0.5 rounded font-mono ${trancheCount === 2 ? 'bg-amber-500 text-slate-950 font-bold' : 'text-slate-400'}`}
+                  className={`px-2 py-0.5 rounded font-mono cursor-pointer ${trancheCount === 2 ? 'bg-amber-500 text-slate-950 font-bold' : 'text-slate-400'}`}
                 >
-                  2 ไม้
+                  2 ไม้ (50/50)
                 </button>
                 <button
                   type="button"
@@ -442,96 +446,155 @@ export const RiskCalculator: React.FC<RiskCalculatorProps> = ({
                     setTranche2Pct('30');
                     setTranche3Pct('30');
                   }}
-                  className={`px-2 py-0.5 rounded font-mono ${trancheCount === 3 ? 'bg-amber-500 text-slate-950 font-bold' : 'text-slate-400'}`}
+                  className={`px-2 py-0.5 rounded font-mono cursor-pointer ${trancheCount === 3 ? 'bg-amber-500 text-slate-950 font-bold' : 'text-slate-400'}`}
                 >
-                  3 ไม้
+                  3 ไม้ (40/30/30)
                 </button>
               </div>
             </div>
 
+            {/* Tranche Input Rows */}
             <div className="grid grid-cols-2 lg:grid-cols-3 gap-2">
-              <div className="p-2 bg-slate-950 rounded-lg border border-slate-800">
-                <span className="text-[10px] text-slate-400 block mb-1">ไม้ 1 (Tranche 1)</span>
+              <div className="p-2.5 bg-slate-950 rounded-xl border border-slate-800 space-y-1.5">
+                <div className="flex justify-between items-center text-[10px] text-slate-400">
+                  <span className="font-bold text-slate-300">ไม้ 1 (Tranche 1)</span>
+                  <span className="font-mono text-emerald-400">{isTranchePctValid && wholeContracts > 0 ? `${c1} สัญญา` : '--'}</span>
+                </div>
                 <div className="flex gap-1.5">
                   <input
                     type="number"
+                    step="any"
                     value={tranche1Price}
                     onChange={(e) => setTranche1Price(e.target.value)}
                     placeholder="ราคาเข้า"
-                    className="w-full px-2 py-1 bg-slate-900 border border-slate-700 rounded text-white font-mono text-[11px]"
+                    className="w-full px-2 py-1 bg-slate-900 border border-slate-700 rounded text-white font-mono text-[11px] focus:outline-none focus:border-amber-500"
                   />
                   <div className="relative w-16">
                     <input
                       type="number"
                       value={tranche1Pct}
                       onChange={(e) => setTranche1Pct(e.target.value)}
-                      className="w-full px-1.5 py-1 bg-slate-900 border border-slate-700 rounded text-amber-400 font-mono text-[11px]"
+                      className="w-full px-1.5 py-1 bg-slate-900 border border-slate-700 rounded text-amber-400 font-mono text-[11px] focus:outline-none focus:border-amber-500"
                     />
                     <span className="absolute right-1 top-1 text-[10px] text-slate-500">%</span>
                   </div>
                 </div>
+                {isTranchePctValid && isValidSetup && c1 > 0 && (
+                  <div className="text-[10px] font-mono text-slate-400 flex justify-between pt-0.5">
+                    <span>ความเสี่ยง:</span>
+                    <span className="text-rose-400">${tranche1Risk.toFixed(2)}</span>
+                  </div>
+                )}
               </div>
 
-              <div className="p-2 bg-slate-950 rounded-lg border border-slate-800">
-                <span className="text-[10px] text-slate-400 block mb-1">ไม้ 2 (Tranche 2)</span>
+              <div className="p-2.5 bg-slate-950 rounded-xl border border-slate-800 space-y-1.5">
+                <div className="flex justify-between items-center text-[10px] text-slate-400">
+                  <span className="font-bold text-slate-300">ไม้ 2 (Tranche 2)</span>
+                  <span className="font-mono text-emerald-400">{isTranchePctValid && wholeContracts > 0 ? `${c2} สัญญา` : '--'}</span>
+                </div>
                 <div className="flex gap-1.5">
                   <input
                     type="number"
+                    step="any"
                     value={tranche2Price}
                     onChange={(e) => setTranche2Price(e.target.value)}
                     placeholder="ราคาเข้า"
-                    className="w-full px-2 py-1 bg-slate-900 border border-slate-700 rounded text-white font-mono text-[11px]"
+                    className="w-full px-2 py-1 bg-slate-900 border border-slate-700 rounded text-white font-mono text-[11px] focus:outline-none focus:border-amber-500"
                   />
                   <div className="relative w-16">
                     <input
                       type="number"
                       value={tranche2Pct}
                       onChange={(e) => setTranche2Pct(e.target.value)}
-                      className="w-full px-1.5 py-1 bg-slate-900 border border-slate-700 rounded text-amber-400 font-mono text-[11px]"
+                      className="w-full px-1.5 py-1 bg-slate-900 border border-slate-700 rounded text-amber-400 font-mono text-[11px] focus:outline-none focus:border-amber-500"
                     />
                     <span className="absolute right-1 top-1 text-[10px] text-slate-500">%</span>
                   </div>
                 </div>
+                {isTranchePctValid && isValidSetup && c2 > 0 && (
+                  <div className="text-[10px] font-mono text-slate-400 flex justify-between pt-0.5">
+                    <span>ความเสี่ยง:</span>
+                    <span className="text-rose-400">${tranche2Risk.toFixed(2)}</span>
+                  </div>
+                )}
               </div>
 
               {trancheCount === 3 && (
-                <div className="p-2 bg-slate-950 rounded-lg border border-slate-800">
-                  <span className="text-[10px] text-slate-400 block mb-1">ไม้ 3 (Tranche 3)</span>
+                <div className="p-2.5 bg-slate-950 rounded-xl border border-slate-800 space-y-1.5">
+                  <div className="flex justify-between items-center text-[10px] text-slate-400">
+                    <span className="font-bold text-slate-300">ไม้ 3 (Tranche 3)</span>
+                    <span className="font-mono text-emerald-400">{isTranchePctValid && wholeContracts > 0 ? `${c3} สัญญา` : '--'}</span>
+                  </div>
                   <div className="flex gap-1.5">
                     <input
                       type="number"
+                      step="any"
                       value={tranche3Price}
                       onChange={(e) => setTranche3Price(e.target.value)}
                       placeholder="ราคาเข้า"
-                      className="w-full px-2 py-1 bg-slate-900 border border-slate-700 rounded text-white font-mono text-[11px]"
+                      className="w-full px-2 py-1 bg-slate-900 border border-slate-700 rounded text-white font-mono text-[11px] focus:outline-none focus:border-amber-500"
                     />
                     <div className="relative w-16">
                       <input
                         type="number"
                         value={tranche3Pct}
                         onChange={(e) => setTranche3Pct(e.target.value)}
-                        className="w-full px-1.5 py-1 bg-slate-900 border border-slate-700 rounded text-amber-400 font-mono text-[11px]"
+                        className="w-full px-1.5 py-1 bg-slate-900 border border-slate-700 rounded text-amber-400 font-mono text-[11px] focus:outline-none focus:border-amber-500"
                       />
                       <span className="absolute right-1 top-1 text-[10px] text-slate-500">%</span>
                     </div>
                   </div>
+                  {isTranchePctValid && isValidSetup && c3 > 0 && (
+                    <div className="text-[10px] font-mono text-slate-400 flex justify-between pt-0.5">
+                      <span>ความเสี่ยง:</span>
+                      <span className="text-rose-400">${tranche3Risk.toFixed(2)}</span>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
 
-            {/* Tranche Summary */}
-            <div className="p-2.5 bg-slate-950 rounded-xl border border-slate-800 flex items-center justify-between text-xs font-mono">
-              <span className="text-slate-400 font-sans">ราคาเฉลี่ยรวมทุกไม้ (Average Entry):</span>
-              <span className="font-bold text-amber-400">
-                ${averageEntry > 0 ? averageEntry.toFixed(currentAsset.decimals) : '--'}
-              </span>
-            </div>
+            {/* Fix 2: Percentage Total Error or Tranche Results */}
+            {!isTranchePctValid ? (
+              <div className="p-3 bg-rose-500/15 border border-rose-500/40 rounded-xl text-xs text-rose-300 flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                <span>
+                  ข้อผิดพลาด: สัดส่วนเปอร์เซ็นต์รวมต้องเท่ากับ 100% พอดี (ปัจจุบันรวมได้: {totalTranchePct}%)
+                </span>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <div className="p-2.5 bg-slate-950 rounded-xl border border-slate-800 flex items-center justify-between text-xs font-mono">
+                  <span className="text-slate-400 font-sans">ราคาเฉลี่ยรวมทุกไม้ (Average Entry):</span>
+                  <span className="font-bold text-amber-400">
+                    ${averageEntry > 0 ? averageEntry.toFixed(currentAsset.decimals) : '--'}
+                  </span>
+                </div>
+
+                <div className="p-2.5 bg-slate-950 rounded-xl border border-slate-800 flex items-center justify-between text-xs font-mono">
+                  <span className="text-slate-400 font-sans">ความเสี่ยงรวมตามแผนแบ่งไม้:</span>
+                  <span className="font-bold text-white">
+                    ${totalTrancheRiskUSD.toFixed(2)}
+                  </span>
+                </div>
+
+                {/* Fix 3 Warning: If total tranche risk exceeds risk budget */}
+                {doesTrancheRiskExceedBudget && (
+                  <div className="p-3 bg-rose-500/15 border border-rose-500/40 rounded-xl text-xs text-rose-300 space-y-1">
+                    <div className="flex items-center gap-1.5 font-bold text-rose-400">
+                      <AlertTriangle className="w-4 h-4 shrink-0" />
+                      <span>ความเสี่ยงรวมของแผนแบ่งไม้ (${totalTrancheRiskUSD.toFixed(2)}) เกินงบความเสี่ยงที่กำหนด (${riskBudgetUSD.toFixed(2)})</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
         {/* Right Column: Calculations & R/R Rules (5 Cols) */}
         <div className="lg:col-span-5 space-y-4 flex flex-col">
-          {/* Rules 2 & 3: R/R Display per TP with 1:3 minimum rule */}
+          {/* Fix 1: R/R Display per TP with Math.round(rr * 100) / 100 >= 3 */}
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-3">
             <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300 pb-2 border-b border-slate-800">
               อัตราผลตอบแทนต่อความเสี่ยง (Risk/Reward Ratio)
@@ -556,16 +619,15 @@ export const RiskCalculator: React.FC<RiskCalculatorProps> = ({
                   </div>
 
                   <div className="text-right">
-                    {target.rr !== null && target.rr !== undefined ? (
+                    {target.rr !== null && target.rr !== undefined && target.price > 0 ? (
                       <div>
-                        {target.rr >= 3 ? (
-                          /* Rule 3: Green badge only appears at 3 or higher */
+                        {/* Fix 1: Compare rounded value >= 3 */}
+                        {Math.round(target.rr * 100) / 100 >= 3 ? (
                           <span className="px-2.5 py-1 bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 rounded-lg font-mono font-bold text-xs inline-flex items-center gap-1">
                             <ShieldCheck className="w-3.5 h-3.5" />
-                            1:{target.rr.toFixed(2)} (ผ่านเกณฑ์)
+                            1:{target.rr.toFixed(2)}
                           </span>
                         ) : (
-                          /* Rule 3: Below 3 show red warning "R/R ต่ำกว่า 1:3" */
                           <span className="px-2.5 py-1 bg-rose-500/20 text-rose-400 border border-rose-500/40 rounded-lg font-mono font-bold text-xs inline-flex items-center gap-1">
                             <AlertTriangle className="w-3.5 h-3.5" />
                             1:{target.rr.toFixed(2)} — R/R ต่ำกว่า 1:3
@@ -582,11 +644,11 @@ export const RiskCalculator: React.FC<RiskCalculatorProps> = ({
 
             <div className="text-[11px] text-slate-400 flex items-start gap-1.5 pt-1">
               <Info className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
-              <span>เกณฑ์มาตรฐาน: R/R ขั้นต่ำต้องไม่น้อยกว่า 1:3 เพื่อความได้เปรียบทางสถิติ</span>
+              <span>เกณฑ์มาตรฐาน: R/R ขั้นต่ำต้องไม่น้อยกว่า 1:3 (ปัดเศษ 2 ตำแหน่ง)</span>
             </div>
           </div>
 
-          {/* Rule 4: Contract Size & Whole Contract Position */}
+          {/* Contract Size & Whole Contract Position */}
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-3">
             <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300 pb-2 border-b border-slate-800">
               ขนาดสัญญา & การคำนวณจำนวนสัญญา (Contract Sizing)
@@ -594,36 +656,43 @@ export const RiskCalculator: React.FC<RiskCalculatorProps> = ({
 
             <div className="space-y-2 font-mono text-xs">
               <div className="flex justify-between p-2.5 bg-slate-950 rounded-xl border border-slate-800 text-slate-300">
-                <span className="font-sans">ขนาดสัญญา (Specification):</span>
+                <span className="font-sans">ขนาดสัญญาที่เลือก:</span>
                 <span className="font-bold text-white">{contractUnitLabel}</span>
               </div>
 
               <div className="flex justify-between p-2.5 bg-slate-950 rounded-xl border border-slate-800 text-slate-300">
-                <span className="font-sans">งบความเสี่ยงที่ยอมรับ (Risk Budget):</span>
+                <span className="font-sans">งบความเสี่ยงที่กำหนด (Risk Budget):</span>
                 <span className="font-bold text-amber-400">${riskBudgetUSD.toFixed(2)}</span>
               </div>
 
               <div className="flex justify-between p-2.5 bg-slate-950 rounded-xl border border-slate-800 text-slate-300">
                 <span className="font-sans">ความเสี่ยงต่อ 1 สัญญาเต็ม:</span>
-                <span className="font-bold text-rose-400">${actualRisk1ContractUSD.toFixed(2)}</span>
+                <span className="font-bold text-rose-400">${riskPer1Contract.toFixed(2)}</span>
               </div>
 
-              {/* Whole contract display or Warning if budget < 1 contract */}
+              {/* Fix 4: When budget < 1 contract, show FACTS ONLY (no advice, never suggest moving SL) */}
               {isRiskTooSmallFor1Contract ? (
-                /* Rule 4 Warning */
-                <div className="p-3 bg-rose-500/15 border border-rose-500/40 rounded-xl space-y-1 text-xs">
-                  <div className="flex items-center gap-1.5 text-rose-300 font-bold">
-                    <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
-                    <span>งบความเสี่ยงเล็กกว่า 1 สัญญาเต็ม</span>
+                <div className="p-3.5 bg-slate-950 border border-rose-500/40 rounded-xl space-y-2 text-xs">
+                  <div className="flex items-center gap-1.5 text-rose-400 font-bold">
+                    <AlertTriangle className="w-4 h-4 shrink-0" />
+                    <span>งบความเสี่ยง (${riskBudgetUSD.toFixed(2)}) เล็กกว่าความเสี่ยงของ 1 สัญญาเต็ม</span>
                   </div>
-                  <p className="text-slate-300 font-sans text-[11px] leading-relaxed">
-                    งบความเสี่ยงของคุณ (${riskBudgetUSD.toFixed(2)}) เล็กกว่าความเสี่ยงของ 1 สัญญาเต็ม (${actualRisk1ContractUSD.toFixed(2)} หรือ {actualRisk1ContractPct.toFixed(2)}% ของพอร์ต)
-                  </p>
-                  <p className="text-rose-400 font-sans text-[11px]">
-                    {isSilver && contractType === 'standard'
-                      ? '💡 แนะนำให้เปลี่ยนขนาดสัญญาเป็น Micro Silver (1,000 oz) หรือขยับ Stop Loss ให้แคบลง'
-                      : '💡 กรุณาเพิ่มเงินทุนหรือปรับจุด Stop Loss'}
-                  </p>
+
+                  <div className="pt-2 border-t border-slate-800 space-y-1.5 text-[11px] font-mono">
+                    <div className="flex justify-between text-slate-300">
+                      <span className="font-sans">ความเสี่ยงของ 1 สัญญามาตรฐาน (Standard):</span>
+                      <span className="font-bold text-white">
+                        ${stdRiskUSD.toFixed(2)} ({stdRiskPct.toFixed(2)}% ของพอร์ต)
+                      </span>
+                    </div>
+
+                    <div className="flex justify-between text-slate-300">
+                      <span className="font-sans">ความเสี่ยงของ 1 สัญญาไมโคร (Micro):</span>
+                      <span className="font-bold text-cyan-400">
+                        ${microRiskUSD.toFixed(2)} ({microRiskPct.toFixed(2)}% ของพอร์ต)
+                      </span>
+                    </div>
+                  </div>
                 </div>
               ) : (
                 /* Whole contracts allowed */
@@ -641,14 +710,6 @@ export const RiskCalculator: React.FC<RiskCalculatorProps> = ({
                       {balanceNum > 0 ? (((wholeContracts * riskPer1Contract) / balanceNum) * 100).toFixed(2) : 0}%)
                     </span>
                   </div>
-                </div>
-              )}
-
-              {/* Total risk for Tranche entries */}
-              {trancheAvgRiskDist > 0 && (
-                <div className="p-2.5 bg-slate-950 rounded-xl border border-slate-800 flex justify-between text-xs">
-                  <span className="font-sans text-slate-300">ความเสี่ยงรวมตามแผนแบ่งไม้:</span>
-                  <span className="font-bold text-amber-300">${trancheTotalRiskUSD.toFixed(2)}</span>
                 </div>
               )}
             </div>
