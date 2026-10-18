@@ -78,6 +78,89 @@ export const TradingChart: React.FC<TradingChartProps> = ({
   const [isDrawingSr, setIsDrawingSr] = useState<boolean>(false);
   const [showSrPanel, setShowSrPanel] = useState<boolean>(false);
 
+  // S/R Touches calculation: candle whose high-low range crosses the level within ±0.3%
+  const srTouches = useMemo(() => {
+    if (srLevel === null || candles.length === 0) return [];
+    const tolerance = srLevel * 0.003;
+    const minL = srLevel - tolerance;
+    const maxL = srLevel + tolerance;
+
+    const list: Array<{
+      index: number;
+      time: number;
+      dateStr: string;
+      volume: number;
+      high: number;
+      low: number;
+      range: number;
+    }> = [];
+
+    candles.forEach((c, idx) => {
+      if (c.low <= maxL && c.high >= minL) {
+        const d = new Date(c.time * 1000);
+        const yyyy = d.getFullYear();
+        const mm = String(d.getMonth() + 1).padStart(2, '0');
+        const dd = String(d.getDate()).padStart(2, '0');
+        const hh = String(d.getHours()).padStart(2, '0');
+        const min = String(d.getMinutes()).padStart(2, '0');
+        list.push({
+          index: idx,
+          time: c.time,
+          dateStr: `${yyyy}-${mm}-${dd} ${hh}:${min}`,
+          volume: c.volume,
+          high: c.high,
+          low: c.low,
+          range: c.high - c.low,
+        });
+      }
+    });
+
+    return list;
+  }, [candles, srLevel]);
+
+  // S/R Strength Assessment: Compare last 3 touches (Never use touch count as strength)
+  const srAssessment = useMemo(() => {
+    if (srTouches.length < 3) {
+      return {
+        status: 'insufficient',
+        text: 'ต้องการข้อมูลทดสอบอย่างน้อย 3 ครั้ง',
+        detail: `ตรวจพบการสัมผัสระดับ ${srTouches.length} ครั้ง (ต้องใช้ข้อมูล 3 ครั้งล่าสุดเพื่อเปรียบเทียบ Volume และ Range)`,
+      };
+    }
+
+    const last3 = srTouches.slice(-3);
+    const [t1, t2, t3] = last3;
+
+    // volume AND range rising → "Level อ่อนลง"
+    const isVolRising = t3.volume > t2.volume && t2.volume > t1.volume;
+    const isRangeRising = t3.range > t2.range && t2.range > t1.range;
+
+    // volume falling → "Level ยังแข็ง"
+    const isVolFalling = t3.volume < t2.volume && t2.volume < t1.volume;
+
+    if (isVolRising && isRangeRising) {
+      return {
+        status: 'weak',
+        text: 'Level อ่อนลง',
+        detail: 'Volume และ Range เพิ่มขึ้นต่อเนื่องในการทดสอบ 3 ครั้งล่าสุด (แรงทะลุเพิ่มขึ้น)',
+      };
+    }
+
+    if (isVolFalling) {
+      return {
+        status: 'strong',
+        text: 'Level ยังแข็ง',
+        detail: 'Volume ลดลงต่อเนื่องในการทดสอบ 3 ครั้งล่าสุด (แรงกดดันลดลง แนวรับ/ต้านยังต้านอยู่)',
+      };
+    }
+
+    return {
+      status: 'neutral',
+      text: 'รอสัญญาณยืนยัน',
+      detail: 'แนวโน้ม Volume และ Range ของ 3 ครั้งล่าสุดยังไม่เข้าเกณฑ์ชัดเจน',
+    };
+  }, [srTouches]);
+
   // Viewport zoom & pan offset
   const [visibleCount, setVisibleCount] = useState<number>(60);
   const [panOffset, setPanOffset] = useState<number>(0);
@@ -383,18 +466,33 @@ export const TradingChart: React.FC<TradingChartProps> = ({
           const isEngulfingBody = isPrevRed && isCurrGreen && c.close > prev.open && c.open <= (prev.close + Math.abs(prev.open - prev.close) * 0.2);
 
           if (isEngulfingBody) {
-            const isConfirmed = c.close > prev.high && c.volume > prev.volume;
+            const closesAboveRedHigh = c.close > prev.high;
+            const volHigher = c.volume > prev.volume;
+
+            let text = '';
+            let isGreen = false;
+
+            if (closesAboveRedHigh && volHigher) {
+              text = 'Buyer จริง';
+              isGreen = true;
+            } else if (closesAboveRedHigh && !volHigher) {
+              text = 'ปิดเหนือ แต่ volume ต่ำ';
+              isGreen = false;
+            } else {
+              text = 'อาจเป็น short covering — รอแท่งยืนยันที่ 2';
+              isGreen = false;
+            }
+
             const badgeY = priceToY(c.low) + 6 * dpr;
 
             ctx.save();
             ctx.font = `bold ${8.5 * dpr}px 'Plus Jakarta Sans', sans-serif`;
-            const text = isConfirmed ? 'Buyer จริง' : 'อาจเป็น short covering';
             const textWidth = ctx.measureText(text).width;
             const badgeW = textWidth + 8 * dpr;
             const badgeH = 14 * dpr;
             const badgeX = centerX - badgeW / 2;
 
-            ctx.fillStyle = isConfirmed ? 'rgba(16, 185, 129, 0.95)' : 'rgba(245, 158, 11, 0.95)';
+            ctx.fillStyle = isGreen ? 'rgba(16, 185, 129, 0.95)' : 'rgba(245, 158, 11, 0.95)';
             if (ctx.roundRect) {
               ctx.beginPath();
               ctx.roundRect(badgeX, badgeY, badgeW, badgeH, 3 * dpr);
@@ -403,7 +501,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
               ctx.fillRect(badgeX, badgeY, badgeW, badgeH);
             }
 
-            ctx.fillStyle = isConfirmed ? '#022c22' : '#451a03';
+            ctx.fillStyle = isGreen ? '#022c22' : '#451a03';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             ctx.fillText(text, centerX, badgeY + badgeH / 2);
@@ -462,11 +560,19 @@ export const TradingChart: React.FC<TradingChartProps> = ({
       ctx.fillText(currentPrice.toFixed(decimals), chartWidth + (rightPadding - 4 * dpr) / 2 + 2 * dpr, currentPriceY);
     }
 
-    // Requirement 5: Support & Resistance horizontal level line
+    // Support & Resistance horizontal level line and ±0.3% tolerance zone
     if (srLevel !== null) {
       const srY = priceToY(srLevel);
       if (srY >= 0 && srY <= chartHeight) {
         ctx.save();
+
+        // ±0.3% tolerance zone band
+        const tolerance = srLevel * 0.003;
+        const topY = priceToY(srLevel + tolerance);
+        const botY = priceToY(srLevel - tolerance);
+        ctx.fillStyle = 'rgba(6, 182, 212, 0.12)';
+        ctx.fillRect(0, Math.min(topY, botY), chartWidth, Math.abs(botY - topY));
+
         ctx.beginPath();
         ctx.strokeStyle = '#06b6d4';
         ctx.lineWidth = 1.8 * dpr;
@@ -778,7 +884,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
     handleResize();
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
-  }, [indicators.showRSI, indicators.showMACD, drawMainChart, drawSubChart]);
+  }, [indicators.showRSI, indicators.showMACD, drawMainChart, drawSubChart, showSrPanel, srLevel]);
 
   // Trigger redraw on state updates
   useEffect(() => {
@@ -845,7 +951,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
     }
   };
 
-  // Quick 1-click price alert from Crosshair
+  // Chart Click: S/R placement or Quick 1-click price alert
   const handleChartClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (isDragging) return;
     const canvas = mainCanvasRef.current;
@@ -868,7 +974,13 @@ export const TradingChart: React.FC<TradingChartProps> = ({
 
     const clickedPrice = minPrice + (1 - clickY / chartHeight) * (maxPrice - minPrice);
     if (clickedPrice > 0 && clickY <= chartHeight) {
-      onQuickAddAlert(Number(clickedPrice.toFixed(decimals)));
+      if (isDrawingSr) {
+        setSrLevel(Number(clickedPrice.toFixed(decimals)));
+        setIsDrawingSr(false);
+        setShowSrPanel(true);
+      } else {
+        onQuickAddAlert(Number(clickedPrice.toFixed(decimals)));
+      }
     }
   };
 
@@ -882,7 +994,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
       <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 border-b border-slate-800 bg-slate-950/70 text-xs">
         {/* Timeframe selector */}
         <div className="flex items-center gap-1 bg-slate-900 p-0.5 rounded-lg border border-slate-800/80">
-          {(['1m', '5m', '15m', '1h', '4h', '1d'] as Timeframe[]).map((tf) => (
+          {(['1m', '5m', '15m', '1h', '4h', '1d', '1w'] as Timeframe[]).map((tf) => (
             <button
               key={tf}
               disabled={isTimeframeDisabled}
@@ -1019,6 +1131,55 @@ export const TradingChart: React.FC<TradingChartProps> = ({
           <span>+ ตั้งแจ้งเตือนราคา</span>
         </button>
 
+        {/* S/R Tester Draw Button */}
+        <button
+          onClick={() => {
+            if (isDrawingSr) {
+              setIsDrawingSr(false);
+            } else {
+              setIsDrawingSr(true);
+              setShowSrPanel(true);
+            }
+          }}
+          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border font-medium transition-colors cursor-pointer ${
+            isDrawingSr
+              ? 'bg-cyan-500/20 border-cyan-400 text-cyan-300 ring-1 ring-cyan-400 animate-pulse'
+              : srLevel !== null
+              ? 'bg-slate-800 border-cyan-500/60 text-cyan-400'
+              : 'bg-slate-900 border-slate-800 text-slate-300 hover:text-white'
+          }`}
+          title="วาดเส้น S/R บนกราฟ"
+        >
+          <Compass className="w-3.5 h-3.5 text-cyan-400" />
+          <span>{isDrawingSr ? 'คลิกบนกราฟเพื่อวางเส้น S/R' : 'วาดเส้น S/R'}</span>
+        </button>
+
+        {/* Clear S/R Level Button */}
+        {srLevel !== null && (
+          <button
+            onClick={() => {
+              setSrLevel(null);
+              setIsDrawingSr(false);
+              setShowSrPanel(false);
+            }}
+            className="flex items-center gap-1 px-2 py-1 rounded-lg border border-slate-800 bg-slate-900 hover:bg-rose-950/40 hover:border-rose-700/60 text-slate-400 hover:text-rose-300 transition-colors cursor-pointer text-[11px]"
+            title="ลบระดับเส้น S/R"
+          >
+            <X className="w-3.5 h-3.5" />
+            <span>ล้างเส้น S/R</span>
+          </button>
+        )}
+
+        {/* Toggle S/R Side Panel */}
+        {srLevel !== null && !showSrPanel && (
+          <button
+            onClick={() => setShowSrPanel(true)}
+            className="flex items-center gap-1 px-2 py-1 rounded-lg border border-cyan-800 bg-cyan-950/40 text-cyan-400 text-[11px] hover:bg-cyan-900/40 cursor-pointer"
+          >
+            <span>ผลทดสอบ S/R</span>
+          </button>
+        )}
+
         {/* Zoom & Pan tools */}
         <div className="flex items-center gap-1 ml-auto text-slate-400">
           <button
@@ -1077,27 +1238,170 @@ export const TradingChart: React.FC<TradingChartProps> = ({
         </div>
       </div>
 
-      {/* Canvas Area */}
-      <div 
-        ref={containerRef}
-        onWheel={handleWheel}
-        className="flex-1 relative w-full h-full min-h-[340px] cursor-crosshair overflow-hidden"
-      >
-        <canvas
-          ref={mainCanvasRef}
-          onMouseMove={handleMouseMove}
-          onMouseDown={handleMouseDown}
-          onMouseUp={handleMouseUp}
-          onMouseLeave={handleMouseLeave}
-          onClick={handleChartClick}
-          className="absolute inset-0 z-10"
-        />
+      {/* Chart Canvas & S/R Side Panel Area */}
+      <div className="flex-1 flex w-full h-full min-h-[340px] overflow-hidden relative">
+        <div 
+          ref={containerRef}
+          onWheel={handleWheel}
+          className="flex-1 relative h-full min-h-[340px] cursor-crosshair overflow-hidden"
+        >
+          {isDrawingSr && (
+            <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 px-3.5 py-1.5 rounded-full bg-cyan-500 text-slate-950 font-bold text-xs shadow-lg flex items-center gap-2 pointer-events-none animate-bounce">
+              <Compass className="w-4 h-4 animate-spin" />
+              <span>คลิกตำแหน่งบนกราฟเพื่อวางเส้น S/R</span>
+            </div>
+          )}
 
-        {/* Sub Indicator Canvas if RSI or MACD enabled */}
-        {(indicators.showRSI || indicators.showMACD) && (
-          <div className="absolute bottom-0 left-0 right-0 h-[120px] border-t border-slate-800/80 bg-slate-950/40 z-20">
-            <canvas ref={subCanvasRef} className="w-full h-full" />
-          </div>
+          <canvas
+            ref={mainCanvasRef}
+            onMouseMove={handleMouseMove}
+            onMouseDown={handleMouseDown}
+            onMouseUp={handleMouseUp}
+            onMouseLeave={handleMouseLeave}
+            onClick={handleChartClick}
+            className="absolute inset-0 z-10"
+          />
+
+          {/* Sub Indicator Canvas if RSI or MACD enabled */}
+          {(indicators.showRSI || indicators.showMACD) && (
+            <div className="absolute bottom-0 left-0 right-0 h-[120px] border-t border-slate-800/80 bg-slate-950/40 z-20">
+              <canvas ref={subCanvasRef} className="w-full h-full" />
+            </div>
+          )}
+        </div>
+
+        {/* S/R Tester Side Panel */}
+        {srLevel !== null && showSrPanel && (
+          <aside className="w-72 lg:w-80 bg-slate-950/95 border-l border-slate-800 flex flex-col z-20 shrink-0">
+            {/* Header */}
+            <div className="p-3 border-b border-slate-800 flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <Compass className="w-4 h-4 text-cyan-400" />
+                <span className="font-bold text-xs text-white">ผลทดสอบ S/R (Support/Resistance)</span>
+              </div>
+              <button
+                onClick={() => setShowSrPanel(false)}
+                className="p-1 text-slate-400 hover:text-white rounded hover:bg-slate-800 transition-colors cursor-pointer"
+                title="ปิดแถบข้าง"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            {/* Level info & Strength Evaluation */}
+            <div className="p-3 border-b border-slate-800/80 space-y-2.5">
+              <div className="bg-slate-900/90 rounded-lg p-2.5 border border-slate-800">
+                <div className="text-[10px] text-slate-400 font-medium">ระดับที่ทดสอบ (S/R Level)</div>
+                <div className="text-base font-mono font-bold text-cyan-400">
+                  {srLevel.toFixed(decimals)}
+                </div>
+                <div className="text-[10px] text-slate-400 font-mono mt-0.5">
+                  ช่วงทดสอบ ±0.3%: {(srLevel * 0.997).toFixed(decimals)} - {(srLevel * 1.003).toFixed(decimals)}
+                </div>
+              </div>
+
+              {/* Strength Assessment Box */}
+              <div className={`p-2.5 rounded-lg border ${
+                srAssessment.status === 'strong'
+                  ? 'bg-emerald-950/40 border-emerald-500/50 text-emerald-300'
+                  : srAssessment.status === 'weak'
+                  ? 'bg-amber-950/40 border-amber-500/50 text-amber-300'
+                  : 'bg-slate-900 border-slate-800 text-slate-300'
+              }`}>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">การประเมินความแข็งแกร่ง</span>
+                  <span className={`text-xs font-bold px-2 py-0.5 rounded-md ${
+                    srAssessment.status === 'strong'
+                      ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
+                      : srAssessment.status === 'weak'
+                      ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40'
+                      : 'bg-slate-800 text-slate-400'
+                  }`}>
+                    {srAssessment.text}
+                  </span>
+                </div>
+                <div className="text-[11px] leading-relaxed">
+                  {srAssessment.detail}
+                </div>
+                <div className="text-[10px] text-slate-400 mt-1.5 pt-1.5 border-t border-slate-800/60">
+                  * กฎการประเมิน: เปรียบเทียบ Volume และ Range ของ 3 ครั้งล่าสุด (ไม่ใช้จำนวนครั้งวัดความแข็งแกร่ง)
+                </div>
+              </div>
+
+              {/* Action Buttons: Set New & Clear Level */}
+              <div className="grid grid-cols-2 gap-2 pt-1">
+                <button
+                  onClick={() => setIsDrawingSr(true)}
+                  className="py-1.5 px-2 bg-slate-900 hover:bg-slate-800 text-cyan-400 border border-cyan-500/30 rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-1 cursor-pointer"
+                >
+                  <Compass className="w-3.5 h-3.5" />
+                  <span>วาดจุดใหม่</span>
+                </button>
+                <button
+                  onClick={() => {
+                    setSrLevel(null);
+                    setIsDrawingSr(false);
+                    setShowSrPanel(false);
+                  }}
+                  className="py-1.5 px-2 bg-slate-900 hover:bg-rose-950/40 text-rose-400 border border-slate-800 hover:border-rose-500/40 rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-1 cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                  <span>ลบเส้น S/R</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Touches List */}
+            <div className="flex-1 overflow-y-auto p-3 space-y-2">
+              <div className="flex items-center justify-between text-xs font-semibold text-slate-300">
+                <span>รายการสัมผัส (Touches)</span>
+                <span className="text-[10px] font-mono text-cyan-400 bg-cyan-950/60 px-1.5 py-0.5 rounded border border-cyan-800/50">
+                  {srTouches.length} ครั้ง
+                </span>
+              </div>
+
+              {srTouches.length === 0 ? (
+                <div className="text-center py-8 text-xs text-slate-400">
+                  ไม่พบแท่งเทียนที่สัมผัสระดับนี้ในช่วง ±0.3%
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  {[...srTouches].reverse().map((touch, i) => {
+                    const originalIdx = srTouches.length - 1 - i;
+                    const isLast3 = originalIdx >= srTouches.length - 3;
+                    return (
+                      <div
+                        key={touch.time}
+                        className={`p-2 rounded-lg border text-[11px] font-mono ${
+                          isLast3
+                            ? 'bg-slate-900 border-cyan-500/40 text-slate-200'
+                            : 'bg-slate-900/50 border-slate-800/80 text-slate-400'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between mb-0.5">
+                          <span className="font-semibold text-slate-300 font-sans">
+                            #{originalIdx + 1} {touch.dateStr}
+                          </span>
+                          {isLast3 && (
+                            <span className="text-[9px] px-1 py-0.2 rounded bg-cyan-500/20 text-cyan-300 font-sans font-semibold">
+                              3 ครั้งล่าสุด
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center justify-between text-[10px] text-slate-400">
+                          <span>Vol: <span className="text-white font-mono">{touch.volume.toLocaleString()}</span></span>
+                          <span>Range: <span className="text-white font-mono">{touch.range.toFixed(decimals)}</span></span>
+                        </div>
+                        <div className="text-[9px] text-slate-400 mt-0.5">
+                          H: {touch.high.toFixed(decimals)} | L: {touch.low.toFixed(decimals)}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </aside>
         )}
       </div>
     </div>
