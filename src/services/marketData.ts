@@ -170,6 +170,32 @@ export async function fetchBinanceKlines(symbol: string, timeframe: Timeframe): 
   }));
 }
 
+// Fetch real historical and current klines for Silver/USD from backend Yahoo Finance proxy
+export async function fetchSilverKlines(
+  symbol: string,
+  timeframe: Timeframe
+): Promise<{ candles: Candle[]; source: string; price: number }> {
+  const isWeekly = timeframe === '1w';
+  const apiTimeframe = isWeekly ? '1d' : timeframe;
+  const res = await fetch(`/api/klines?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(apiTimeframe)}`);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch Silver klines: ${res.statusText}`);
+  }
+  const data = await res.json();
+  const rawCandles: Candle[] = data.candles || [];
+
+  const finalCandles = isWeekly ? aggregateDailyToWeekly(rawCandles) : rawCandles;
+  const currentPrice = typeof data.regularMarketPrice === 'number'
+    ? data.regularMarketPrice
+    : (finalCandles.length > 0 ? finalCandles[finalCandles.length - 1].close : 0);
+
+  return {
+    candles: finalCandles,
+    source: data.source || 'Yahoo Finance (COMEX)',
+    price: currentPrice,
+  };
+}
+
 // Parse TradingView CSV export (case-insensitive column matching: time, open, high, low, close, volume)
 export function parseTradingViewCSV(csvText: string): Candle[] {
   const lines = csvText.trim().split(/\r?\n/).filter(line => line.trim().length > 0);

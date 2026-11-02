@@ -8,6 +8,7 @@ import {
 import { 
   INITIAL_ASSETS, 
   fetchBinanceKlines, 
+  fetchSilverKlines,
   parseTradingViewCSV, 
   getStoredCandles, 
   setStoredCandles,
@@ -18,12 +19,10 @@ import { soundService } from './services/sound';
 import { TopNav } from './components/TopNav';
 import { AssetSelector } from './components/AssetSelector';
 import { TradingChart } from './components/TradingChart';
-import { LwChart } from './components/LwChart';
 import { AlertModal } from './components/AlertModal';
 import { AlertDrawer } from './components/AlertDrawer';
 import { AlertNotificationToast } from './components/AlertNotificationToast';
 import { RiskCalculator } from './components/RiskCalculator';
-import { MarketAnalysisView } from './components/MarketAnalysisView';
 import { UploadCloud, FileSpreadsheet, Trash2, CheckCircle, AlertCircle } from 'lucide-react';
 
 const ALERTS_STORAGE_KEY = 'apextrade_alerts_v2';
@@ -39,8 +38,7 @@ function formatCandleDate(timestampSec: number): string {
 }
 
 export default function App() {
-  const [activeView, setActiveView] = useState<'trade' | 'alerts' | 'calculator' | 'analysis'>('trade');
-  const [chartEngine, setChartEngine] = useState<'new' | 'legacy'>('new');
+  const [activeView, setActiveView] = useState<'trade' | 'alerts' | 'calculator'>('trade');
 
   // Master asset list without any hardcoded/simulated prices
   const [assets, setAssets] = useState<Asset[]>(() => {
@@ -92,8 +90,9 @@ export default function App() {
 
   const currentAsset = assets.find(a => a.symbol === selectedSymbol) || assets[0];
   const isBinanceAsset = selectedSymbol === 'BTC/USDT' || selectedSymbol === 'ETH/USDT';
+  const isSilverAsset = selectedSymbol === 'XAG/USD' || selectedSymbol === 'SI1!';
 
-  const isCsvDaily = !isBinanceAsset && !!(currentAsset.csvTimeframe?.toLowerCase().includes('d') || currentAsset.csvTimeframe?.toLowerCase().includes('day') || currentAsset.csvTimeframe === '1D' || currentAsset.csvTimeframe === '1d');
+  const isCsvDaily = !isBinanceAsset && !isSilverAsset && !!(currentAsset.csvTimeframe?.toLowerCase().includes('d') || currentAsset.csvTimeframe?.toLowerCase().includes('day') || currentAsset.csvTimeframe === '1D' || currentAsset.csvTimeframe === '1d');
 
   const displayedCandles = useMemo(() => {
     if (isCsvDaily && isWeeklyView) {
@@ -221,6 +220,48 @@ export default function App() {
       return () => {
         isMounted = false;
       };
+    } else if (isSilverAsset) {
+      // Load real klines and price for Silver/USD via backend Yahoo Finance proxy
+      let isMounted = true;
+      const loadSilver = () => {
+        fetchSilverKlines(selectedSymbol, timeframe)
+          .then(({ candles: silverCandles, source, price }) => {
+            if (!isMounted) return;
+            if (silverCandles.length > 0) {
+              setCandles(silverCandles);
+              const last = silverCandles[silverCandles.length - 1];
+              const prev = silverCandles.length > 1 ? silverCandles[silverCandles.length - 2] : last;
+              const change = prev.close > 0 ? ((price - prev.close) / prev.close) * 100 : 0;
+              const lastDate = formatCandleDate(last.time);
+
+              setAssets(prev => prev.map(a => {
+                if (a.symbol === selectedSymbol) {
+                  return {
+                    ...a,
+                    price,
+                    changeVsPrevCandle: Number(change.toFixed(2)),
+                    lastCandleDate: lastDate,
+                    dataSource: source,
+                  };
+                }
+                return a;
+              }));
+
+              checkPriceAlerts(selectedSymbol, price);
+            }
+          })
+          .catch(err => {
+            console.warn('Silver klines fetch failed:', err);
+          });
+      };
+
+      loadSilver();
+      const intervalId = setInterval(loadSilver, 30000);
+
+      return () => {
+        isMounted = false;
+        clearInterval(intervalId);
+      };
     } else {
       // Load CSV data from localStorage for other assets
       const stored = getStoredCandles(selectedSymbol);
@@ -262,12 +303,12 @@ export default function App() {
         }));
       }
     }
-  }, [selectedSymbol, timeframe, isBinanceAsset, checkPriceAlerts]);
+  }, [selectedSymbol, timeframe, isBinanceAsset, isSilverAsset, checkPriceAlerts]);
 
   // Real Binance @kline_<interval> WebSocket for BTC and ETH real price updates
   useEffect(() => {
     if (!isBinanceAsset || typeof window === 'undefined') {
-      setIsLiveWs(false);
+      setIsLiveWs(isSilverAsset);
       return;
     }
 
@@ -542,84 +583,30 @@ export default function App() {
 
         {activeView === 'calculator' ? (
           <RiskCalculator assets={assets} currentAsset={currentAsset} />
-        ) : activeView === 'analysis' ? (
-          <MarketAnalysisView
-            assets={assets}
-            selectedSymbol={selectedSymbol}
-            onSelectSymbol={setSelectedSymbol}
-          />
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 min-h-[580px]">
             {/* Interactive Trading Chart (9 Cols on desktop) */}
-            <div className="lg:col-span-9 flex flex-col min-h-[580px]">
-              {/* Chart Switcher: กราฟใหม่ / กราฟเดิม */}
-              <div className="flex items-center justify-between mb-2">
-                <div className="inline-flex items-center p-0.5 bg-slate-900 border border-slate-800 rounded-lg text-xs">
-                  <button
-                    onClick={() => setChartEngine('new')}
-                    className={`px-3 py-1 font-semibold rounded-md transition-all ${
-                      chartEngine === 'new'
-                        ? 'bg-amber-500 text-slate-950 shadow-sm'
-                        : 'text-slate-400 hover:text-slate-200'
-                    }`}
-                  >
-                    กราฟใหม่
-                  </button>
-                  <button
-                    onClick={() => setChartEngine('legacy')}
-                    className={`px-3 py-1 font-semibold rounded-md transition-all ${
-                      chartEngine === 'legacy'
-                        ? 'bg-amber-500 text-slate-950 shadow-sm'
-                        : 'text-slate-400 hover:text-slate-200'
-                    }`}
-                  >
-                    กราฟเดิม
-                  </button>
-                </div>
-              </div>
-
+            <div className="lg:col-span-9 h-[580px] lg:h-auto min-h-[520px]">
               {candles.length > 0 ? (
-                chartEngine === 'new' ? (
-                  <LwChart
-                    candles={displayedCandles}
-                    symbol={selectedSymbol}
-                    decimals={currentAsset.decimals}
-                    timeframe={timeframe}
-                    onTimeframeChange={setTimeframe}
-                    alerts={alerts}
-                    currentPrice={currentAsset.price ?? 0}
-                    onQuickAddAlert={handleQuickAddAlert}
-                    onOpenAlertModal={() => {
-                      setPrefilledAlertPrice(null);
-                      setIsAlertModalOpen(true);
-                    }}
-                    isLive={isLiveWs}
-                    isTimeframeDisabled={!isBinanceAsset}
-                    isWeeklyView={isWeeklyView}
-                    onToggleWeeklyView={() => setIsWeeklyView(v => !v)}
-                    canToggleWeeklyView={isCsvDaily}
-                  />
-                ) : (
-                  <TradingChart
-                    candles={displayedCandles}
-                    symbol={selectedSymbol}
-                    decimals={currentAsset.decimals}
-                    timeframe={timeframe}
-                    onTimeframeChange={setTimeframe}
-                    alerts={alerts}
-                    currentPrice={currentAsset.price ?? 0}
-                    onQuickAddAlert={handleQuickAddAlert}
-                    onOpenAlertModal={() => {
-                      setPrefilledAlertPrice(null);
-                      setIsAlertModalOpen(true);
-                    }}
-                    isLive={isLiveWs}
-                    isTimeframeDisabled={!isBinanceAsset}
-                    isWeeklyView={isWeeklyView}
-                    onToggleWeeklyView={() => setIsWeeklyView(v => !v)}
-                    canToggleWeeklyView={isCsvDaily}
-                  />
-                )
+                <TradingChart
+                  candles={displayedCandles}
+                  symbol={selectedSymbol}
+                  decimals={currentAsset.decimals}
+                  timeframe={timeframe}
+                  onTimeframeChange={setTimeframe}
+                  alerts={alerts}
+                  currentPrice={currentAsset.price ?? 0}
+                  onQuickAddAlert={handleQuickAddAlert}
+                  onOpenAlertModal={() => {
+                    setPrefilledAlertPrice(null);
+                    setIsAlertModalOpen(true);
+                  }}
+                  isLive={isLiveWs}
+                  isTimeframeDisabled={!isBinanceAsset && !isSilverAsset}
+                  isWeeklyView={isWeeklyView}
+                  onToggleWeeklyView={() => setIsWeeklyView(v => !v)}
+                  canToggleWeeklyView={isCsvDaily}
+                />
               ) : (
                 <div className="flex flex-col items-center justify-center h-full min-h-[500px] bg-slate-900 border border-slate-800 rounded-xl p-8 text-center">
                   <div className="w-16 h-16 rounded-2xl bg-slate-800/80 border border-slate-700 flex items-center justify-center text-amber-400 mb-4 shadow-lg">
@@ -725,6 +712,11 @@ export default function App() {
                       <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
                       Binance Live
                     </span>
+                  ) : isSilverAsset ? (
+                    <span className="text-[10px] font-mono text-emerald-400 flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                      Yahoo Finance (COMEX)
+                    </span>
                   ) : (
                     <span className="text-[10px] font-mono text-amber-400">
                       CSV Upload
@@ -739,6 +731,19 @@ export default function App() {
                     </p>
                     <div className="text-[11px] text-slate-400 bg-slate-950 p-2 rounded-lg border border-slate-800">
                       สถานะ WebSocket: {isLiveWs ? <span className="text-emerald-400 font-semibold">กำลังเชื่อมต่อ (Connected)</span> : <span className="text-slate-400">รอการเชื่อมต่อ</span>}
+                    </div>
+                  </div>
+                ) : isSilverAsset ? (
+                  <div className="text-xs text-slate-400 space-y-2">
+                    <p className="leading-relaxed">
+                      ดึงข้อมูลราคา COMEX Silver Futures (<span className="text-slate-200 font-mono">SI=F</span>) อัตโนมัติจาก Yahoo Finance แบบ Real-time ไม่ต้องอัปโหลด CSV
+                    </p>
+                    <div className="text-[11px] text-slate-400 bg-slate-950 p-2 rounded-lg border border-slate-800 flex items-center justify-between">
+                      <span>สถานะการเชื่อมต่อ:</span>
+                      <span className="text-emerald-400 font-semibold flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                        เชื่อมต่อแล้ว (อัปเดตทุก 30 วินาที)
+                      </span>
                     </div>
                   </div>
                 ) : (

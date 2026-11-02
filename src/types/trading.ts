@@ -15,7 +15,7 @@ export interface Asset {
   low24h?: number;
   volume24h?: string;
   lastCandleDate?: string;
-  dataSource?: 'Binance' | 'CSV Upload' | null;
+  dataSource?: 'Binance' | 'CSV Upload' | 'Yahoo Finance (COMEX)' | string | null;
   csvTimeframe?: string;
 }
 
@@ -41,6 +41,13 @@ export interface IndicatorSettings {
   showRSI: boolean;
   showMACD: boolean;
   showVolume: boolean;
+}
+
+export interface TrendLine {
+  id: string;
+  p1: { time: number; price: number };
+  p2: { time: number; price: number };
+  color: string;
 }
 
 export interface PriceAlert {
