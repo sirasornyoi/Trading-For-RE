@@ -36,7 +36,62 @@ interface BreakoutScalpViewProps {
   onTriggerAlert?: (msg: string) => void;
 }
 
-export const BreakoutScalpView: React.FC<BreakoutScalpViewProps> = () => {
+interface ErrorBoundaryProps {
+  children: React.ReactNode;
+}
+
+interface ErrorBoundaryState {
+  hasError: boolean;
+  error: Error | null;
+}
+
+class BreakoutScalpErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  constructor(props: ErrorBoundaryProps) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error('BreakoutScalpView error caught by boundary:', error, errorInfo);
+  }
+
+  handleReload = () => {
+    this.setState({ hasError: false, error: null });
+  };
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="flex flex-col items-center justify-center min-h-[400px] p-6 text-center bg-slate-900 border border-rose-900/50 rounded-2xl max-w-2xl mx-auto my-8 space-y-4 shadow-xl">
+          <div className="w-14 h-14 rounded-2xl bg-rose-500/10 border border-rose-500/30 flex items-center justify-center text-rose-400">
+            <AlertTriangle className="w-8 h-8 text-rose-400" />
+          </div>
+          <div className="space-y-1.5">
+            <h2 className="text-base font-bold text-white">แบบที่ 2 เกิดข้อผิดพลาด</h2>
+            <p className="text-xs text-slate-400 max-w-md leading-relaxed">
+              {this.state.error?.message || 'เกิดข้อผิดพลาดในการประมวลผลข้อมูล Breakout Scalp'}
+            </p>
+          </div>
+          <button
+            onClick={this.handleReload}
+            className="flex items-center gap-2 px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-xl shadow-lg shadow-amber-500/20 transition-all cursor-pointer"
+          >
+            <RefreshCw className="w-4 h-4" />
+            <span>โหลดใหม่</span>
+          </button>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
+const BreakoutScalpInnerView: React.FC<BreakoutScalpViewProps> = ({ onTriggerAlert }) => {
   const [configs, setConfigs] = useState<Record<string, BreakoutScalpAssetConfig>>(() => loadScalpConfigs());
   const [selectedSymbol, setSelectedSymbol] = useState<string>('BTC/USDT');
   const [activeTab, setActiveTab] = useState<ScalpSide>('bull');
@@ -47,10 +102,23 @@ export const BreakoutScalpView: React.FC<BreakoutScalpViewProps> = () => {
   const [h4Candles, setH4Candles] = useState<Candle[]>([]);
   const [d1Candles, setD1Candles] = useState<Candle[]>([]);
 
-  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<number>(Date.now());
 
   const currentConfig = configs[selectedSymbol] || configs['BTC/USDT'];
+
+  // Ref to track active request selection (symbol and timeframe) to drop stale async responses
+  const activeSelectionRef = useRef<{ symbol: string; timeframe: '1m' | '5m' }>({
+    symbol: selectedSymbol,
+    timeframe: currentConfig.timeframe,
+  });
+
+  // Always keep ref in sync
+  activeSelectionRef.current = {
+    symbol: selectedSymbol,
+    timeframe: currentConfig.timeframe,
+  };
 
   // Save config helper
   const updateConfig = useCallback((updater: (prev: BreakoutScalpAssetConfig) => BreakoutScalpAssetConfig) => {
@@ -64,6 +132,38 @@ export const BreakoutScalpView: React.FC<BreakoutScalpViewProps> = () => {
     });
   }, [selectedSymbol]);
 
+  // Asset switcher handler: immediately clear candles to prevent cross-asset leakage
+  const handleSelectAsset = (symbol: string) => {
+    if (symbol === selectedSymbol) return;
+    setLtfCandles([]);
+    setH1Candles([]);
+    setH4Candles([]);
+    setD1Candles([]);
+    setIsLoading(true);
+    setFetchError(null);
+    activeSelectionRef.current = {
+      symbol,
+      timeframe: configs[symbol]?.timeframe || '5m',
+    };
+    setSelectedSymbol(symbol);
+  };
+
+  // Timeframe switcher handler: immediately clear candles
+  const handleSelectTimeframe = (tf: '1m' | '5m') => {
+    if (tf === currentConfig.timeframe) return;
+    setLtfCandles([]);
+    setH1Candles([]);
+    setH4Candles([]);
+    setD1Candles([]);
+    setIsLoading(true);
+    setFetchError(null);
+    activeSelectionRef.current = {
+      symbol: selectedSymbol,
+      timeframe: tf,
+    };
+    updateConfig(c => ({ ...c, timeframe: tf }));
+  };
+
   // Fetch candles for an asset
   const fetchCandlesForAsset = useCallback(async (symbol: string, tf: '1m' | '5m') => {
     const assetMeta = SCALP_ASSETS.find(a => a.symbol === symbol);
@@ -71,54 +171,112 @@ export const BreakoutScalpView: React.FC<BreakoutScalpViewProps> = () => {
 
     try {
       if (assetMeta.source === 'Binance') {
-        // Binance: fetch LTF, 1h, 4h, 1d in parallel
         const [ltf, h1, h4, d1] = await Promise.all([
           fetchBinanceKlines(symbol, tf as Timeframe),
           fetchBinanceKlines(symbol, '1h'),
           fetchBinanceKlines(symbol, '4h'),
           fetchBinanceKlines(symbol, '1d'),
         ]);
+
+        // Discard stale responses if user switched symbol or timeframe
+        if (
+          activeSelectionRef.current.symbol !== symbol ||
+          activeSelectionRef.current.timeframe !== tf
+        ) {
+          return;
+        }
+
+        if (!ltf || ltf.length === 0) {
+          setFetchError(`ไม่พบข้อมูลแท่งเทียนสำหรับ ${symbol}`);
+          return;
+        }
+
+        setFetchError(null);
         setLtfCandles(ltf);
-        setH1Candles(h1);
-        setH4Candles(h4);
-        setD1Candles(d1);
+        setH1Candles(h1 || []);
+        setH4Candles(h4 || []);
+        setD1Candles(d1 || []);
+        setLastRefreshedAt(Date.now());
       } else {
-        // Yahoo Finance via server proxy /api/klines
-        // Fetch LTF, 1h, 1d
         const [ltfRes, h1Res, d1Res] = await Promise.all([
           fetch(`/api/klines?symbol=${encodeURIComponent(symbol)}&timeframe=${tf}`),
           fetch(`/api/klines?symbol=${encodeURIComponent(symbol)}&timeframe=1h`),
           fetch(`/api/klines?symbol=${encodeURIComponent(symbol)}&timeframe=1d`),
         ]);
 
+        if (
+          activeSelectionRef.current.symbol !== symbol ||
+          activeSelectionRef.current.timeframe !== tf
+        ) {
+          return;
+        }
+
+        if (!ltfRes.ok) {
+          setFetchError(`ไม่สามารถดึงข้อมูล ${symbol} (${ltfRes.status}: ${ltfRes.statusText})`);
+          return;
+        }
+
         const [ltfData, h1Data, d1Data] = await Promise.all([
           ltfRes.json(),
-          h1Res.json(),
-          d1Res.json(),
+          h1Res.ok ? h1Res.json() : { candles: [] },
+          d1Res.ok ? d1Res.json() : { candles: [] },
         ]);
 
+        if (
+          activeSelectionRef.current.symbol !== symbol ||
+          activeSelectionRef.current.timeframe !== tf
+        ) {
+          return;
+        }
+
         const ltf = ltfData.candles || [];
+        if (ltf.length === 0) {
+          setFetchError(`ไม่พบข้อมูลแท่งเทียนสำหรับ ${symbol}`);
+          return;
+        }
+
+        setFetchError(null);
         const h1 = h1Data.candles || [];
         const d1 = d1Data.candles || [];
-        // Yahoo has no native 4h -> aggregate 1h to 4h
         const h4 = aggregate1hTo4h(h1);
 
         setLtfCandles(ltf);
         setH1Candles(h1);
         setH4Candles(h4);
         setD1Candles(d1);
+        setLastRefreshedAt(Date.now());
       }
-      setLastRefreshedAt(Date.now());
-    } catch (err) {
-      console.error('Error fetching candles for Breakout Scalp:', err);
+    } catch (err: any) {
+      if (
+        activeSelectionRef.current.symbol === symbol &&
+        activeSelectionRef.current.timeframe === tf
+      ) {
+        setFetchError(`เกิดข้อผิดพลาดในการโหลดข้อมูล ${symbol}: ${err?.message || 'Network error'}`);
+      }
     }
   }, []);
 
   // Initial fetch on asset or TF change
   useEffect(() => {
+    setLtfCandles([]);
+    setH1Candles([]);
+    setH4Candles([]);
+    setD1Candles([]);
     setIsLoading(true);
-    fetchCandlesForAsset(selectedSymbol, currentConfig.timeframe).finally(() => {
-      setIsLoading(false);
+    setFetchError(null);
+
+    const reqSymbol = selectedSymbol;
+    const reqTf = currentConfig.timeframe;
+
+    activeSelectionRef.current = { symbol: reqSymbol, timeframe: reqTf };
+
+    fetchCandlesForAsset(reqSymbol, reqTf).finally(() => {
+      if (
+        activeSelectionRef.current.symbol === reqSymbol &&
+        activeSelectionRef.current.timeframe === reqTf
+      ) {
+        setIsLoading(false);
+      }
     });
   }, [selectedSymbol, currentConfig.timeframe, fetchCandlesForAsset]);
 
@@ -130,26 +288,56 @@ export const BreakoutScalpView: React.FC<BreakoutScalpViewProps> = () => {
     const ltfIntervalMs = isBinance ? 10000 : 30000;
 
     const ltfTimer = setInterval(() => {
-      // Refresh LTF
+      const reqSymbol = selectedSymbol;
+      const reqTf = currentConfig.timeframe;
+
       const fetchLTFOnly = async () => {
         try {
           if (isBinance) {
-            const ltf = await fetchBinanceKlines(selectedSymbol, currentConfig.timeframe as Timeframe);
-            setLtfCandles(ltf);
+            const ltf = await fetchBinanceKlines(reqSymbol, reqTf as Timeframe);
+            if (
+              activeSelectionRef.current.symbol === reqSymbol &&
+              activeSelectionRef.current.timeframe === reqTf
+            ) {
+              if (ltf && ltf.length > 0) {
+                setLtfCandles(ltf);
+                setLastRefreshedAt(Date.now());
+              }
+            }
           } else {
-            const res = await fetch(`/api/klines?symbol=${encodeURIComponent(selectedSymbol)}&timeframe=${currentConfig.timeframe}`);
+            const res = await fetch(`/api/klines?symbol=${encodeURIComponent(reqSymbol)}&timeframe=${reqTf}`);
+            if (
+              activeSelectionRef.current.symbol !== reqSymbol ||
+              activeSelectionRef.current.timeframe !== reqTf
+            ) {
+              return;
+            }
+            if (!res.ok) {
+              setFetchError(`ไม่สามารถดึงข้อมูล ${reqSymbol} (${res.status})`);
+              return;
+            }
             const data = await res.json();
-            if (data.candles) setLtfCandles(data.candles);
+            if (
+              activeSelectionRef.current.symbol === reqSymbol &&
+              activeSelectionRef.current.timeframe === reqTf
+            ) {
+              if (data.candles && data.candles.length > 0) {
+                setLtfCandles(data.candles);
+                setLastRefreshedAt(Date.now());
+              } else {
+                setFetchError(`ไม่พบข้อมูลแท่งเทียนสำหรับ ${reqSymbol}`);
+              }
+            }
           }
-          setLastRefreshedAt(Date.now());
         } catch {}
       };
       fetchLTFOnly();
     }, ltfIntervalMs);
 
     const htfTimer = setInterval(() => {
-      // Refresh HTF every 5 minutes
-      fetchCandlesForAsset(selectedSymbol, currentConfig.timeframe);
+      const reqSymbol = selectedSymbol;
+      const reqTf = currentConfig.timeframe;
+      fetchCandlesForAsset(reqSymbol, reqTf);
     }, 300000);
 
     return () => {
@@ -310,7 +498,7 @@ export const BreakoutScalpView: React.FC<BreakoutScalpViewProps> = () => {
           return (
             <button
               key={asset.symbol}
-              onClick={() => setSelectedSymbol(asset.symbol)}
+              onClick={() => handleSelectAsset(asset.symbol)}
               className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                 isSelected
                   ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
@@ -343,6 +531,26 @@ export const BreakoutScalpView: React.FC<BreakoutScalpViewProps> = () => {
           </button>
         </div>
       </div>
+
+      {/* Fetch Error Banner */}
+      {fetchError && (
+        <div className="bg-rose-950/50 border border-rose-800/80 rounded-xl p-3.5 flex items-center justify-between text-rose-300 text-xs shadow-md">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+            <span className="font-semibold">{fetchError}</span>
+          </div>
+          <button
+            onClick={() => {
+              setFetchError(null);
+              setIsLoading(true);
+              fetchCandlesForAsset(selectedSymbol, currentConfig.timeframe).finally(() => setIsLoading(false));
+            }}
+            className="px-3 py-1 bg-rose-900/60 hover:bg-rose-800 rounded-lg border border-rose-700/60 font-semibold cursor-pointer text-white"
+          >
+            ลองใหม่
+          </button>
+        </div>
+      )}
 
       {/* Main Grid: Left Chart + Config, Right Checklist 0-8 */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
@@ -604,6 +812,21 @@ export const BreakoutScalpView: React.FC<BreakoutScalpViewProps> = () => {
                     );
                   })}
                 </svg>
+              ) : fetchError ? (
+                <div className="flex flex-col items-center justify-center text-rose-400 text-xs p-6 text-center space-y-2">
+                  <AlertTriangle className="w-6 h-6 text-rose-500" />
+                  <span className="font-semibold">{fetchError}</span>
+                  <button
+                    onClick={() => {
+                      setFetchError(null);
+                      setIsLoading(true);
+                      fetchCandlesForAsset(selectedSymbol, currentConfig.timeframe).finally(() => setIsLoading(false));
+                    }}
+                    className="px-3 py-1 bg-rose-950/80 hover:bg-rose-900 border border-rose-800 text-rose-300 rounded font-semibold text-[11px] cursor-pointer"
+                  >
+                    โหลดใหม่
+                  </button>
+                </div>
               ) : (
                 <div className="flex flex-col items-center justify-center text-slate-500 text-xs">
                   <RefreshCw className="w-5 h-5 animate-spin mb-1 text-amber-400" />
@@ -656,7 +879,7 @@ export const BreakoutScalpView: React.FC<BreakoutScalpViewProps> = () => {
                   {(['1m', '5m'] as const).map(tf => (
                     <button
                       key={tf}
-                      onClick={() => updateConfig(c => ({ ...c, timeframe: tf }))}
+                      onClick={() => handleSelectTimeframe(tf)}
                       className={`py-1 text-center font-mono font-bold rounded cursor-pointer ${
                         currentConfig.timeframe === tf ? 'bg-amber-500 text-slate-950' : 'text-slate-400 hover:text-white'
                       }`}
@@ -953,5 +1176,13 @@ export const BreakoutScalpView: React.FC<BreakoutScalpViewProps> = () => {
         </div>
       </div>
     </div>
+  );
+};
+
+export const BreakoutScalpView: React.FC<BreakoutScalpViewProps> = (props) => {
+  return (
+    <BreakoutScalpErrorBoundary>
+      <BreakoutScalpInnerView {...props} />
+    </BreakoutScalpErrorBoundary>
   );
 };

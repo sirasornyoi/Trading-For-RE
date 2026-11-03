@@ -304,7 +304,16 @@ export function evaluateBreakoutScalp(
 
   // --- Step 4 Check first: Find Trigger Candle within last 10 closed bars ---
   let triggerEval: TriggerEvaluation | null = null;
-  let hasAvgVolZero = false;
+  let latestAvgVolZero = false;
+
+  if (hasLTF) {
+    const latestIdx = closedLTF.length - 1;
+    const latestPrior20 = closedLTF.slice(latestIdx - 20, latestIdx);
+    const latestAvgVol20 = latestPrior20.reduce((sum, b) => sum + (b.volume || 0), 0) / 20;
+    if (latestAvgVol20 === 0) {
+      latestAvgVolZero = true;
+    }
+  }
 
   if (level !== null && level > 0 && hasLTF) {
     const maxSearchBars = Math.min(10, closedLTF.length - 21);
@@ -315,10 +324,6 @@ export function evaluateBreakoutScalp(
       // 20 bars prior to this candle
       const prior20 = closedLTF.slice(idx - 20, idx);
       const avgVol20 = prior20.reduce((sum, b) => sum + (b.volume || 0), 0) / 20;
-
-      if (avgVol20 === 0) {
-        hasAvgVolZero = true;
-      }
 
       // Prior 5 bars
       const prior5 = closedLTF.slice(idx - 5, idx);
@@ -631,14 +636,6 @@ export function evaluateBreakoutScalp(
       inference: 'ข้อมูลไม่พอ: LTF',
       status: 'unknown',
     });
-  } else if (hasAvgVolZero) {
-    items.push({
-      step: 4,
-      title: 'Trigger',
-      fact: 'Volume เฉลี่ย 20 แท่ง = 0',
-      inference: 'ข้อมูลไม่พอ: Volume เฉลี่ย 20 แท่ง = 0',
-      status: 'unknown',
-    });
   } else if (triggerEval) {
     const triggerTime = new Date(triggerEval.triggerCandle.time * 1000).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
     const step4Fact = `แท่ง ${triggerTime} (ย้อนหลัง ${triggerEval.barsAgo} บาร์) ปิด=${triggerEval.triggerCandle.close.toFixed(config.decimals)} · Vol=${triggerEval.volumeRatio}× เฉลี่ย 20`;
@@ -659,6 +656,14 @@ export function evaluateBreakoutScalp(
       fact: step4Fact,
       inference: step4Inference,
       status: step4Status,
+    });
+  } else if (latestAvgVolZero) {
+    items.push({
+      step: 4,
+      title: 'Trigger',
+      fact: 'Volume เฉลี่ย 20 แท่ง = 0',
+      inference: 'ข้อมูลไม่พอ: Volume เฉลี่ย 20 แท่ง = 0',
+      status: 'unknown',
     });
   } else {
     items.push({
@@ -746,7 +751,10 @@ export function evaluateBreakoutScalp(
     step5Inferences.unshift('ยังไม่มีจุดเข้า');
   } else {
     // Error checks (❌ ชนะ ⚠️)
-    if (riskAmount !== null && riskAmount <= 0) {
+    if (riskAmount !== null && riskAmount === 0) {
+      step5Status = 'fail';
+      step5Inferences.unshift('Stop กับ Entry ราคาเดียวกัน (ใส่ buffer)');
+    } else if (riskAmount !== null && riskAmount < 0) {
       step5Status = 'fail';
       step5Inferences.unshift('Stop อยู่ผิดฝั่ง entry');
     } else if (realTarget !== null && rewardAmount !== null && rewardAmount <= 0) {
@@ -788,7 +796,10 @@ export function evaluateBreakoutScalp(
     step6Inference = 'รอแท่ง breakout';
     step6Fact = `โหมด=สุดแท่ง Breakout · ยังไม่พบแท่ง Breakout Trigger`;
   } else if (stopPrice !== null && entryPrice !== null && riskAmount !== null) {
-    if (riskAmount <= 0) {
+    if (riskAmount === 0) {
+      step6Status = 'fail';
+      step6Inference = 'Stop กับ Entry ราคาเดียวกัน (ใส่ buffer)';
+    } else if (riskAmount < 0) {
       step6Status = 'fail';
       step6Inference = 'Stop อยู่ผิดฝั่ง entry';
     } else {
@@ -833,20 +844,25 @@ export function evaluateBreakoutScalp(
     const nowSec = Math.floor(Date.now() / 1000);
     const elapsedSec = nowSec - (triggerTimeSec + ltfSec);
     const isOver5Min = elapsedSec > 300;
-    const risk = riskAmount && riskAmount > 0 ? riskAmount : 1;
-    const reached1R = maxGain >= 1.0 * risk;
-
-    step7Fact = `แท่งหลัง Trigger=${postTriggerCandles.length} แท่ง · ผ่านไป=${Math.floor(elapsedSec / 60)} นาที · MaxGain=${maxGain.toFixed(config.decimals)} (1R=${risk.toFixed(config.decimals)})`;
 
     if (closedBackInside) {
       step7Status = 'warn';
       step7Inference = 'มีแท่งปิดกลับฝั่งเส้น (สัญญาณเสี่ยง False Breakout)';
-    } else if (isOver5Min && !reached1R) {
-      step7Status = 'warn';
-      step7Inference = 'time stop (เกิน 5 นาทีวิ่งไม่ถึง 1R)';
+      step7Fact = `แท่งหลัง Trigger=${postTriggerCandles.length} แท่ง · ผ่านไป=${Math.floor(elapsedSec / 60)} นาที · MaxGain=${maxGain.toFixed(config.decimals)}`;
+    } else if (riskAmount === null || riskAmount <= 0) {
+      step7Status = 'unknown';
+      step7Inference = 'คำนวณ 1R ไม่ได้';
+      step7Fact = `แท่งหลัง Trigger=${postTriggerCandles.length} แท่ง · ผ่านไป=${Math.floor(elapsedSec / 60)} นาที · MaxGain=${maxGain.toFixed(config.decimals)}`;
     } else {
-      step7Status = 'info';
-      step7Inference = 'กำลังดำเนินตามแผน (ยังไม่พบสัญญาณออกก่อนกำหนด)';
+      const reached1R = maxGain >= 1.0 * riskAmount;
+      step7Fact = `แท่งหลัง Trigger=${postTriggerCandles.length} แท่ง · ผ่านไป=${Math.floor(elapsedSec / 60)} นาที · MaxGain=${maxGain.toFixed(config.decimals)} (1R=${riskAmount.toFixed(config.decimals)})`;
+      if (isOver5Min && !reached1R) {
+        step7Status = 'warn';
+        step7Inference = 'time stop (เกิน 5 นาทีวิ่งไม่ถึง 1R)';
+      } else {
+        step7Status = 'info';
+        step7Inference = 'กำลังดำเนินตามแผน (ยังไม่พบสัญญาณออกก่อนกำหนด)';
+      }
     }
   }
   items.push({
@@ -866,7 +882,11 @@ export function evaluateBreakoutScalp(
     step8Status = 'unknown';
     step8Inference = 'รอแท่ง breakout';
     step8Fact = 'รอแท่ง breakout เพื่อคำนวณ Risk และ R:R';
-  } else if (riskAmount !== null && riskAmount <= 0) {
+  } else if (riskAmount !== null && riskAmount === 0) {
+    step8Status = 'fail';
+    step8Inference = 'Stop กับ Entry ราคาเดียวกัน (ใส่ buffer)';
+    step8Fact = `Risk=0.00 (Stop กับ Entry ราคาเดียวกัน) · เป้าจริง=${realTarget !== null ? realTarget.toFixed(config.decimals) : '-'}`;
+  } else if (riskAmount !== null && riskAmount < 0) {
     step8Status = 'fail';
     step8Inference = 'Stop อยู่ผิดฝั่ง entry';
     step8Fact = `Risk=${riskAmount.toFixed(config.decimals)} (Stop อยู่ผิดฝั่ง) · เป้าจริง=${realTarget !== null ? realTarget.toFixed(config.decimals) : '-'}`;

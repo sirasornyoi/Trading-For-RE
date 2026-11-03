@@ -30,6 +30,12 @@
 - [done] Added bid price note to Step 5 [FACT] and strict data sufficiency checks with no mock indicator fallbacks
 - [done] Implemented 3-step sequence for Impulse in Step 1 (Narrative -> Volume 3 bars -> HTF alignment)
 - [done] Defaulted alerts to disabled (alertEnabled: false) across all assets
+- [done] Added activeSelectionRef to drop stale async responses across asset and timeframe switches
+- [done] Immediately clear candle state on asset/TF switch and render loading/error indicators
+- [done] Built BreakoutScalpErrorBoundary to prevent white-screen crashes and offer retry button
+- [done] Removed risk = 1 fallback in Step 7; display ❓ "คำนวณ 1R ไม่ได้" when riskAmount is null or <= 0
+- [done] Made Step 4 ❓ only when latest closed bar has avg 20-bar vol = 0; valid trigger in other bars is displayed normally
+- [done] Differentiated risk = 0 ("Stop กับ Entry ราคาเดียวกัน (ใส่ buffer)") and risk < 0 ("Stop อยู่ผิดฝั่ง entry") across Steps 5, 6, 8
 
 ## Known Issues
 - None
