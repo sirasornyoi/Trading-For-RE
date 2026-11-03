@@ -1,12 +1,35 @@
 import React, { useState } from 'react';
 import { Asset, EvidenceItem, GroundingSource } from '../types/trading';
-import { Sparkles, Search, ExternalLink, AlertCircle, ArrowUpRight, ArrowDownRight, Layers, Calendar, CheckCircle2, ShieldAlert, Globe } from 'lucide-react';
+import {
+  Sparkles,
+  Search,
+  ExternalLink,
+  AlertCircle,
+  ArrowUpRight,
+  ArrowDownRight,
+  Layers,
+  Calendar,
+  CheckCircle2,
+  Globe,
+} from 'lucide-react';
 
 interface MarketAnalysisViewProps {
   assets: Asset[];
   selectedSymbol: string;
   onSelectSymbol: (symbol: string) => void;
 }
+
+const TIER_ORDER: Record<string, number> = {
+  T1: 1,
+  T2: 2,
+  T3: 3,
+};
+
+const LAYERS: { key: 'Fundamental' | 'Technical' | 'News'; label: string; weight: string; description: string }[] = [
+  { key: 'Fundamental', label: 'Fundamental', weight: '60%', description: 'ปัจจัยพื้นฐาน นโยบายการเงิน ตัวเลขเศรษฐกิจ และกระแสเงินทุน' },
+  { key: 'Technical', label: 'Technical', weight: '30%', description: 'โครงสร้างราคา ตัวชี้วัดทางเทคนิค แนวรับแนวต้าน และโมเมนตัม' },
+  { key: 'News', label: 'News', weight: '10%', description: 'ข่าวสาร เหตุการณ์ฉับพลัน และกระแสข่าวรายวัน' },
+];
 
 export const MarketAnalysisView: React.FC<MarketAnalysisViewProps> = ({
   assets,
@@ -25,6 +48,10 @@ export const MarketAnalysisView: React.FC<MarketAnalysisViewProps> = ({
   const handleRunAnalysis = async () => {
     if (!thesis.trim()) {
       setError('กรุณากรอกสมมติฐาน (My thesis) ของคุณก่อนเริ่มการวิเคราะห์');
+      return;
+    }
+    if (thesis.trim().length > 1000) {
+      setError('สมมติฐานต้องมีความยาวไม่เกิน 1,000 ตัวอักษร');
       return;
     }
 
@@ -60,8 +87,10 @@ export const MarketAnalysisView: React.FC<MarketAnalysisViewProps> = ({
     }
   };
 
+  const verifiedCount = items.filter(i => i.verified).length;
+
   return (
-    <div className="flex flex-col gap-4 max-w-6xl mx-auto w-full pb-12 select-none">
+    <div className="flex flex-col gap-5 max-w-6xl mx-auto w-full pb-12 select-none">
       {/* Header card */}
       <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg">
         <div className="flex items-center gap-3 mb-2">
@@ -71,7 +100,7 @@ export const MarketAnalysisView: React.FC<MarketAnalysisViewProps> = ({
           <div>
             <h1 className="text-base font-bold text-white">วิเคราะห์หลักฐานตลาด (Market Evidence Analysis)</h1>
             <p className="text-xs text-slate-400">
-              วิเคราะห์และค้นหาหลักฐานจริงจากตลาดด้วย Gemini และ Google Search Grounding เพื่อสนับสนุนหรือคัดค้านสมมติฐานของคุณ
+              วิเคราะห์และค้นหาหลักฐานจริงจากตลาดด้วย Gemini และ Google Search Grounding เพื่อตรวจสอบสมมติฐานของคุณ
             </p>
           </div>
         </div>
@@ -100,19 +129,25 @@ export const MarketAnalysisView: React.FC<MarketAnalysisViewProps> = ({
             {/* Quick Helper / Info */}
             <div className="md:col-span-2 flex items-center bg-slate-950/60 border border-slate-800/80 rounded-lg p-3 text-xs text-slate-400">
               <span className="leading-relaxed">
-                ระบบจะค้นหาข้อมูลอัปเดตแบบเรียลไทม์ เช่น ข้อมูลทางการ (T1: CFTC COT, FedWatch, BLS, ETF flow) 
-                และความเห็นสถาบันหลัก (T2: Bloomberg, Reuters) โดยคัดกรองเฉพาะหลักฐานที่มีวันที่และแหล่งอ้างอิงชัดเจน
+                ระบบจะค้นหาข้อมูลอัปเดตแบบเรียลไทม์ 4 หัวข้อบังคับ (ราคา, Fed rate & Yields, CPI, ETF flow) 
+                และคัดกรองเฉพาะหลักฐานที่มีวันที่และแหล่งอ้างอิงชัดเจน ตรวจสอบโดเมนกับผลการค้นหาจริง
               </span>
             </div>
           </div>
 
           {/* Thesis input */}
           <div>
-            <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-              สมมติฐานของฉัน (My Thesis)
-            </label>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="text-xs font-semibold text-slate-300">
+                สมมติฐานของฉัน (My Thesis)
+              </label>
+              <span className={`text-[10px] font-mono ${thesis.length > 1000 ? 'text-rose-400 font-bold' : 'text-slate-500'}`}>
+                {thesis.length}/1000 ตัวอักษร
+              </span>
+            </div>
             <textarea
               rows={3}
+              maxLength={1000}
               value={thesis}
               onChange={(e) => setThesis(e.target.value)}
               placeholder={`เช่น: ${currentAsset.symbol} มีแนวโน้มปรับตัวขึ้นต่อจากแรงหนุนเงินเฟ้อที่ชะลอตัวและการไหลเข้าของเงินทุนสถาบัน หรือ กำลังเข้าสู่โซนสะสมกำลัง`}
@@ -146,7 +181,7 @@ export const MarketAnalysisView: React.FC<MarketAnalysisViewProps> = ({
 
             {hasSearched && items.length > 0 && (
               <span className="text-xs text-slate-400 font-mono">
-                พบหลักฐานที่ผ่านการตรวจสอบ {items.length} รายการ
+                พบหลักฐาน {items.length} รายการ (พบโดเมนในผลค้นหา {verifiedCount} รายการ)
               </span>
             )}
           </div>
@@ -164,147 +199,142 @@ export const MarketAnalysisView: React.FC<MarketAnalysisViewProps> = ({
         </div>
       )}
 
-      {/* Results List */}
+      {/* Results Section: 3 Groups by Layer */}
       {items.length > 0 && (
-        <div className="space-y-3">
-          <div className="flex items-center justify-between px-1">
-            <h2 className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2">
-              <Layers className="w-3.5 h-3.5 text-amber-400" />
-              <span>รายการหลักฐานที่ตรวจสอบแล้ว ({currentAsset.symbol})</span>
-            </h2>
-          </div>
+        <div className="space-y-6">
+          {LAYERS.map(layer => {
+            const layerItems = items.filter(i => i.layer === layer.key);
+            const bullItems = layerItems
+              .filter(i => i.side === 'bull')
+              .sort((a, b) => (TIER_ORDER[a.tier] || 99) - (TIER_ORDER[b.tier] || 99));
+            const bearItems = layerItems
+              .filter(i => i.side === 'bear')
+              .sort((a, b) => (TIER_ORDER[a.tier] || 99) - (TIER_ORDER[b.tier] || 99));
 
-          <div className="grid grid-cols-1 gap-3">
-            {items.map((item, idx) => {
-              const isBull = item.side === 'bull';
-              return (
-                <div
-                  key={`${item.source_url}-${idx}`}
-                  className="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-sm hover:border-slate-700/80 transition-all text-xs space-y-2.5"
-                >
-                  {/* Top badges */}
-                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800/60 pb-2">
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      {/* Bull / Bear Side */}
-                      <span
-                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md font-bold text-[10px] ${
-                          isBull
-                            ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
-                            : 'bg-rose-500/20 text-rose-400 border border-rose-500/40'
-                        }`}
-                      >
-                        {isBull ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownRight className="w-3 h-3" />}
-                        {isBull ? 'BULL (หนุน)' : 'BEAR (ต้าน)'}
+            return (
+              <div key={layer.key} className="bg-slate-900/90 border border-slate-800 rounded-xl p-4 shadow-sm space-y-3">
+                {/* Layer Group Header */}
+                <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                  <div className="flex items-center gap-2">
+                    <Layers className="w-4 h-4 text-amber-400" />
+                    <h2 className="text-sm font-bold text-white tracking-wide">
+                      {layer.label} ({layer.weight})
+                    </h2>
+                    <span className="text-[11px] text-slate-400 hidden sm:inline">
+                      — {layer.description}
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-slate-400 font-mono">
+                    {layerItems.length} รายการ
+                  </span>
+                </div>
+
+                {/* 2 Columns: BULL (Left) | BEAR (Right) */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Column 1: BULL */}
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-1.5 px-1 py-1 rounded bg-emerald-950/40 border border-emerald-800/40 text-emerald-400 text-xs font-bold">
+                      <ArrowUpRight className="w-4 h-4" />
+                      <span>BULL</span>
+                      <span className="text-[10px] text-emerald-500/80 font-mono ml-auto">
+                        ({bullItems.length})
                       </span>
-
-                      {/* Layer */}
-                      <span className="px-2 py-0.5 rounded-md bg-slate-800 text-slate-300 font-medium text-[10px] border border-slate-700/60">
-                        {item.layer}
-                      </span>
-
-                      {/* Tier */}
-                      <span
-                        className={`px-2 py-0.5 rounded-md font-bold text-[10px] ${
-                          item.tier === 'T1'
-                            ? 'bg-purple-500/20 text-purple-300 border border-purple-500/40'
-                            : item.tier === 'T2'
-                            ? 'bg-blue-500/20 text-blue-300 border border-blue-500/40'
-                            : 'bg-slate-800 text-slate-400'
-                        }`}
-                        title={
-                          item.tier === 'T1'
-                            ? 'T1: Smart money / Official data (CFTC, Fed, BLS)'
-                            : item.tier === 'T2'
-                            ? 'T2: Major institutional consensus'
-                            : 'T3: Single voice / retail'
-                        }
-                      >
-                        Tier {item.tier}
-                      </span>
-
-                      {/* Label */}
-                      <span
-                        className={`px-2 py-0.5 rounded-md font-bold text-[10px] ${
-                          item.label === 'FACT'
-                            ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
-                            : item.label === 'INFER'
-                            ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
-                            : 'bg-slate-800 text-slate-400'
-                        }`}
-                      >
-                        {item.label}
-                      </span>
-
-                      {/* Side basis */}
-                      <span className="text-[10px] text-slate-400 font-mono">
-                        ({item.side_basis})
-                      </span>
-
-                      {/* Verification Status */}
-                      {item.verified === false && (
-                        <span className="px-2 py-0.5 rounded-md font-bold text-[10px] bg-rose-500/20 text-rose-300 border border-rose-500/40 flex items-center gap-1">
-                          <AlertCircle className="w-3 h-3 text-rose-400" />
-                          ลิงก์ไม่พบในผลค้นหาจริง
-                        </span>
-                      )}
                     </div>
 
-                    {/* Date */}
-                    <div className="flex items-center gap-1.5 text-slate-400 text-[11px] font-mono">
-                      <Calendar className="w-3.5 h-3.5 text-slate-400" />
-                      <span>{item.date}</span>
-                    </div>
+                    {bullItems.length === 0 ? (
+                      <div className="p-4 rounded-lg bg-slate-950/40 border border-slate-800/50 text-center text-slate-500 text-xs">
+                        ไม่มีหลักฐานฝั่ง BULL ในหมวดนี้
+                      </div>
+                    ) : (
+                      <div className="space-y-2.5">
+                        {bullItems.map((item, idx) => (
+                          <EvidenceCard key={`${item.source_url}-${idx}`} item={item} currentSymbol={currentAsset.symbol} />
+                        ))}
+                      </div>
+                    )}
                   </div>
 
-                  {/* Evidence Value */}
-                  <div className="text-slate-100 font-medium leading-relaxed text-[13px]">
-                    {item.value}
-                  </div>
-
-                  {/* Mechanism */}
-                  {item.mechanism && (
-                    <div className="bg-slate-950/60 rounded-lg p-2.5 border border-slate-800/80 text-[11px] text-slate-300 leading-relaxed">
-                      <span className="text-slate-400 font-semibold block text-[10px] uppercase mb-0.5">
-                        กลไกการส่งผลต่อ {currentAsset.symbol} (Mechanism):
+                  {/* Column 2: BEAR */}
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-1.5 px-1 py-1 rounded bg-rose-950/40 border border-rose-800/40 text-rose-400 text-xs font-bold">
+                      <ArrowDownRight className="w-4 h-4" />
+                      <span>BEAR</span>
+                      <span className="text-[10px] text-rose-500/80 font-mono ml-auto">
+                        ({bearItems.length})
                       </span>
-                      {item.mechanism}
-                    </div>
-                  )}
-
-                  {/* Source Footer */}
-                  <div className="flex flex-wrap items-center justify-between gap-2 pt-1 text-[11px]">
-                    <div className="flex items-center gap-1.5 text-slate-400">
-                      <span className="text-slate-400">แหล่งข้อมูล:</span>
-                      <span className="font-semibold text-slate-200">{item.source_name}</span>
                     </div>
 
-                    <div className="flex items-center gap-2">
-                      {item.verified === false && (
-                        <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-rose-950/80 text-rose-300 border border-rose-800/80 flex items-center gap-1">
-                          <AlertCircle className="w-3 h-3 text-rose-400" />
-                          ลิงก์ไม่พบในผลค้นหาจริง
-                        </span>
-                      )}
-                      <a
-                        href={item.source_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-cyan-400 hover:text-cyan-300 flex items-center gap-1 font-mono transition-colors"
-                        title={item.source_url}
-                      >
-                        <span>เปิดลิงก์แหล่งที่มา</span>
-                        <ExternalLink className="w-3 h-3" />
-                      </a>
-                    </div>
+                    {bearItems.length === 0 ? (
+                      <div className="p-4 rounded-lg bg-slate-950/40 border border-slate-800/50 text-center text-slate-500 text-xs">
+                        ไม่มีหลักฐานฝั่ง BEAR ในหมวดนี้
+                      </div>
+                    ) : (
+                      <div className="space-y-2.5">
+                        {bearItems.map((item, idx) => (
+                          <EvidenceCard key={`${item.source_url}-${idx}`} item={item} currentSymbol={currentAsset.symbol} />
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
-              );
-            })}
+              </div>
+            );
+          })}
+
+          {/* Thesis Relation Section: 2 Boxes (List only, no scores) */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+            {/* หนุน thesis */}
+            <div className="bg-slate-900 border border-emerald-900/40 rounded-xl p-4 shadow-sm space-y-3">
+              <div className="flex items-center gap-2 border-b border-slate-800 pb-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                <h3 className="text-xs font-bold text-emerald-400 uppercase tracking-wider">หนุน thesis</h3>
+              </div>
+              {items.filter(i => i.thesis_relation === 'supports').length === 0 ? (
+                <p className="text-xs text-slate-500">ไม่มีหลักฐานที่ระบุว่าหนุน thesis</p>
+              ) : (
+                <div className="space-y-2">
+                  {items.filter(i => i.thesis_relation === 'supports').map((item, idx) => (
+                    <div key={idx} className="bg-slate-950/70 border border-slate-800/80 rounded-lg p-2.5 text-xs space-y-1">
+                      <div className="flex items-center gap-2 text-[10px] text-slate-400">
+                        <span className="font-bold text-purple-300 font-mono">[{item.tier}]</span>
+                        <span className="text-slate-300 font-medium">{item.source_name}</span>
+                        <span className="text-slate-500 font-mono">{item.date}</span>
+                      </div>
+                      <p className="text-slate-200 text-[11px] leading-relaxed">{item.value}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* ขัด thesis */}
+            <div className="bg-slate-900 border border-rose-900/40 rounded-xl p-4 shadow-sm space-y-3">
+              <div className="flex items-center gap-2 border-b border-slate-800 pb-2">
+                <AlertCircle className="w-4 h-4 text-rose-400" />
+                <h3 className="text-xs font-bold text-rose-400 uppercase tracking-wider">ขัด thesis</h3>
+              </div>
+              {items.filter(i => i.thesis_relation === 'contradicts').length === 0 ? (
+                <p className="text-xs text-slate-500">ไม่มีหลักฐานที่ระบุว่าขัด thesis</p>
+              ) : (
+                <div className="space-y-2">
+                  {items.filter(i => i.thesis_relation === 'contradicts').map((item, idx) => (
+                    <div key={idx} className="bg-slate-950/70 border border-slate-800/80 rounded-lg p-2.5 text-xs space-y-1">
+                      <div className="flex items-center gap-2 text-[10px] text-slate-400">
+                        <span className="font-bold text-purple-300 font-mono">[{item.tier}]</span>
+                        <span className="text-slate-300 font-medium">{item.source_name}</span>
+                        <span className="text-slate-500 font-mono">{item.date}</span>
+                      </div>
+                      <p className="text-slate-200 text-[11px] leading-relaxed">{item.value}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Grounding Sources Summary */}
           {groundingSources.length > 0 && (
-            <div className="mt-5 bg-slate-950/80 border border-slate-800 rounded-xl p-4 text-xs">
+            <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-4 text-xs">
               <div className="flex items-center gap-2 text-slate-300 font-semibold mb-2.5">
                 <Globe className="w-4 h-4 text-cyan-400" />
                 <span>แหล่งข้อมูลค้นหาจริงจาก Google Search Grounding ({groundingSources.length} แหล่ง):</span>
@@ -341,6 +371,123 @@ export const MarketAnalysisView: React.FC<MarketAnalysisViewProps> = ({
           </p>
         </div>
       )}
+    </div>
+  );
+};
+
+// Sub-component for individual evidence card
+const EvidenceCard: React.FC<{ item: EvidenceItem; currentSymbol: string }> = ({ item, currentSymbol }) => {
+  const isBull = item.side === 'bull';
+
+  return (
+    <div className="bg-slate-950/80 border border-slate-800/90 rounded-xl p-3.5 shadow-sm hover:border-slate-700/80 transition-all text-xs space-y-2.5">
+      {/* Top badges */}
+      <div className="flex flex-wrap items-center justify-between gap-1.5 border-b border-slate-800/60 pb-2">
+        <div className="flex flex-wrap items-center gap-1.5">
+          {/* Side: BULL / BEAR */}
+          <span
+            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md font-bold text-[10px] ${
+              isBull
+                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
+                : 'bg-rose-500/20 text-rose-400 border border-rose-500/40'
+            }`}
+          >
+            {isBull ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownRight className="w-3 h-3" />}
+            {isBull ? 'BULL' : 'BEAR'}
+          </span>
+
+          {/* Tier with updated definitions */}
+          <span
+            className={`px-2 py-0.5 rounded-md font-bold text-[10px] cursor-help ${
+              item.tier === 'T1'
+                ? 'bg-purple-500/20 text-purple-300 border border-purple-500/40'
+                : item.tier === 'T2'
+                ? 'bg-blue-500/20 text-blue-300 border border-blue-500/40'
+                : 'bg-slate-800 text-slate-400 border border-slate-700/60'
+            }`}
+            title={
+              item.tier === 'T1'
+                ? 'T1: ข้อมูลทางการ/positioning จริง (Fed, BLS, EIA, CFTC COT, CME FedWatch, ETF flow, on-chain, World Silver Institute)'
+                : item.tier === 'T2'
+                ? 'T2: สถาบัน/สำนักข่าวใหญ่ (Reuters, Bloomberg, CNBC, MarketWatch, Goldman Sachs, JPM, HSBC)'
+                : 'T3: เว็บราคา/ชาร์ต (Investing.com, TradingView, Kitco, CoinGecko, FXStreet) / ความเห็นนักวิเคราะห์รายเดียว'
+            }
+          >
+            Tier {item.tier}
+          </span>
+
+          {/* Label: FACT / INFER / SPEC */}
+          <span
+            className={`px-2 py-0.5 rounded-md font-bold text-[10px] ${
+              item.label === 'FACT'
+                ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
+                : item.label === 'INFER'
+                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                : 'bg-slate-800 text-slate-400'
+            }`}
+          >
+            {item.label}
+          </span>
+
+          {/* Side basis */}
+          <span className="text-[10px] text-slate-400 font-mono">
+            ({item.side_basis})
+          </span>
+
+          {/* Verified Status */}
+          {item.verified ? (
+            <span className="px-2 py-0.5 rounded-md font-bold text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center gap-1">
+              <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+              พบโดเมนนี้ในผลค้นหา
+            </span>
+          ) : (
+            <span className="px-2 py-0.5 rounded-md font-bold text-[10px] bg-rose-500/20 text-rose-300 border border-rose-500/40 flex items-center gap-1">
+              <AlertCircle className="w-3 h-3 text-rose-400" />
+              ไม่พบในผลค้นหาจริง — ตรวจเองก่อนใช้
+            </span>
+          )}
+        </div>
+
+        {/* Date */}
+        <div className="flex items-center gap-1 text-slate-400 text-[11px] font-mono">
+          <Calendar className="w-3.5 h-3.5 text-slate-400" />
+          <span>{item.date}</span>
+        </div>
+      </div>
+
+      {/* Evidence Value */}
+      <div className="text-slate-100 font-medium leading-relaxed text-[12px]">
+        {item.value}
+      </div>
+
+      {/* Mechanism */}
+      {item.mechanism && (
+        <div className="bg-slate-900/80 rounded-lg p-2.5 border border-slate-800/80 text-[11px] text-slate-300 leading-relaxed">
+          <span className="text-slate-400 font-semibold block text-[10px] uppercase mb-0.5">
+            กลไกต่อ {currentSymbol} (Mechanism):
+          </span>
+          {item.mechanism}
+        </div>
+      )}
+
+      {/* Source Footer */}
+      <div className="flex flex-wrap items-center justify-between gap-2 pt-1 text-[11px]">
+        <div className="flex items-center gap-1.5 text-slate-400">
+          <span>แหล่งข้อมูล:</span>
+          <span className="font-semibold text-slate-200">{item.source_name}</span>
+        </div>
+
+        <a
+          href={item.source_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-cyan-400 hover:text-cyan-300 flex items-center gap-1 font-mono transition-colors"
+          title={item.source_url}
+        >
+          <span>เปิดลิงก์แหล่งที่มา</span>
+          <ExternalLink className="w-3 h-3" />
+        </a>
+      </div>
     </div>
   );
 };

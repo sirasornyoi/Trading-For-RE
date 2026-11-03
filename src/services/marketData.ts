@@ -170,21 +170,61 @@ export async function fetchBinanceKlines(symbol: string, timeframe: Timeframe): 
   }));
 }
 
+// Aggregate 1-hour candles into 4-hour candles (UTC 14400-second bucket)
+export function aggregateTo4h(h1Candles: Candle[]): Candle[] {
+  if (!h1Candles || h1Candles.length === 0) return [];
+  const sorted = [...h1Candles].sort((a, b) => a.time - b.time);
+  const blockMap = new Map<number, Candle[]>();
+
+  for (const c of sorted) {
+    const blockTime = Math.floor(c.time / 14400) * 14400;
+    const list = blockMap.get(blockTime) || [];
+    list.push(c);
+    blockMap.set(blockTime, list);
+  }
+
+  const h4Candles: Candle[] = [];
+  for (const [blockTime, candles] of blockMap.entries()) {
+    if (candles.length === 0) continue;
+    candles.sort((a, b) => a.time - b.time);
+    const open = candles[0].open;
+    const close = candles[candles.length - 1].close;
+    let high = -Infinity;
+    let low = Infinity;
+    let volume = 0;
+    for (const c of candles) {
+      if (c.high > high) high = c.high;
+      if (c.low < low) low = c.low;
+      volume += c.volume || 0;
+    }
+    h4Candles.push({
+      time: blockTime,
+      open,
+      high,
+      low,
+      close,
+      volume,
+    });
+  }
+
+  return h4Candles.sort((a, b) => a.time - b.time);
+}
+
 // Fetch real historical and current klines for Silver/USD from backend Yahoo Finance proxy
 export async function fetchSilverKlines(
   symbol: string,
   timeframe: Timeframe
 ): Promise<{ candles: Candle[]; source: string; price: number }> {
-  const isWeekly = timeframe === '1w';
-  const apiTimeframe = isWeekly ? '1d' : timeframe;
-  const res = await fetch(`/api/klines?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(apiTimeframe)}`);
+  // Request timeframe directly from /api/klines (server supports 1w with 5y range directly)
+  const res = await fetch(`/api/klines?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}`);
   if (!res.ok) {
     throw new Error(`Failed to fetch Silver klines: ${res.statusText}`);
   }
   const data = await res.json();
   const rawCandles: Candle[] = data.candles || [];
 
-  const finalCandles = isWeekly ? aggregateDailyToWeekly(rawCandles) : rawCandles;
+  // When requesting 4h, server returns 1h candles -> aggregate to 4h UTC buckets
+  const finalCandles = timeframe === '4h' ? aggregateTo4h(rawCandles) : rawCandles;
   const currentPrice = typeof data.regularMarketPrice === 'number'
     ? data.regularMarketPrice
     : (finalCandles.length > 0 ? finalCandles[finalCandles.length - 1].close : 0);

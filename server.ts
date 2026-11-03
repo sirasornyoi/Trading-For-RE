@@ -13,6 +13,17 @@ app.use(express.json());
 
 const ai = new GoogleGenAI();
 
+function domainOf(urlStr: string): string {
+  if (!urlStr) return '';
+  try {
+    const full = urlStr.startsWith('http://') || urlStr.startsWith('https://') ? urlStr : `https://${urlStr}`;
+    const u = new URL(full);
+    return u.hostname.replace(/^www\./i, '').toLowerCase();
+  } catch {
+    return '';
+  }
+}
+
 // API endpoint for AI Market Evidence Analysis with Google Search Grounding
 app.post('/api/analyze', async (req, res) => {
   try {
@@ -20,25 +31,39 @@ app.post('/api/analyze', async (req, res) => {
     if (!thesis || typeof thesis !== 'string') {
       return res.status(400).json({ error: 'Thesis is required' });
     }
+    if (thesis.length > 1000) {
+      return res.status(400).json({ error: 'Thesis must not exceed 1000 characters' });
+    }
 
-    const prompt = `You are a financial market evidence researcher.
+    const today = new Date().toISOString().slice(0, 10);
+    const prompt = `You are a financial market evidence researcher. Today is ${today}.
 Asset: ${symbol || 'Unknown'} (${assetName || ''})
 User Thesis: "${thesis}"
 
-Task:
-1. Search the web for current, factual market evidence, macroeconomic data (T1: CFTC COT, Fed, central banks, BLS), institutional consensus (T2: Bloomberg, Reuters, Goldman Sachs, etc.), or real-world drivers relating to this asset and thesis.
-2. For each piece of evidence, determine:
+Rules:
+1. Macro/flow data must be published within the last 30 days. All numerical data must explicitly state the "as of" date (เช่น ข้อมูล ณ วันที่ YYYY-MM-DD).
+2. You must research and include evidence for all 4 required topics:
+   (1) ราคาปัจจุบัน (Current Price)
+   (2) Fed rate + 2Y/10Y yields
+   (3) CPI ล่าสุด (Latest CPI)
+   (4) ETF flow / Inventory ของ asset นั้น
+   If any of these 4 topics cannot be found, include an item explicitly stating "ไม่พบข้อมูล" for that topic instead of guessing or fabricating numbers.
+3. Tier definitions:
+   - T1: ข้อมูลทางการ/positioning จริง (Fed, BLS, EIA, CFTC COT, CME FedWatch, ETF flow, on-chain, World Silver Institute)
+   - T2: สถาบัน/สำนักข่าวใหญ่ (Reuters, Bloomberg, CNBC, MarketWatch, Goldman Sachs, JPM, HSBC)
+   - T3: เว็บราคา/ชาร์ต (Investing.com, TradingView, Kitco, CoinGecko, FXStreet). If evidence is from a single analyst, commentary, or blog, classify as T3 and the value field must explicitly include "มุมเดี่ยว ไม่ใช่ฉันทามติ".
+4. For each item, determine:
    - layer: "Fundamental" | "Technical" | "News"
-   - side: "bull" | "bear"
+   - side: "bull" | "bear" (market price direction)
+   - thesis_relation: "supports" | "contradicts" (evaluate specifically against User Thesis: does this evidence support or contradict the user's thesis?)
    - label: "FACT" | "INFER" | "SPEC"
    - tier: "T1" | "T2" | "T3"
-   - value: Thai language concise explanation of the finding
+   - value: Thai language concise explanation of the finding (with as of date)
    - source_name: Name of the publishing source
    - source_url: Direct URL or domain of the source found
-   - date: Date of the report or event (YYYY-MM-DD or recent month)
-   - mechanism: Thai explanation of the economic mechanism impacting the price of ${symbol}
+   - date: Date of the report or event in YYYY-MM-DD format
+   - mechanism: Thai explanation of the economic mechanism impacting ${symbol}
    - side_basis: "self-evident" | "placed by model"
-   - verified: true if from a verified source from search, false otherwise
 
 Format your entire response as a valid JSON object with an "items" array:
 \`\`\`json
@@ -47,15 +72,15 @@ Format your entire response as a valid JSON object with an "items" array:
     {
       "layer": "Fundamental",
       "side": "bull",
+      "thesis_relation": "supports",
       "label": "FACT",
       "tier": "T1",
       "value": "...",
       "source_name": "...",
       "source_url": "https://...",
-      "date": "2025-...",
+      "date": "YYYY-MM-DD",
       "mechanism": "...",
-      "side_basis": "self-evident",
-      "verified": true
+      "side_basis": "self-evident"
     }
   ]
 }
@@ -104,18 +129,40 @@ Format your entire response as a valid JSON object with an "items" array:
       }
     }
 
-    // Attach verified flag or augment source_url with search grounding if missing
+    // Process items:
+    // 1. If item has no source_url, check if any groundingSource matches source_name
+    // 2. Discard model's verified property and verify only via domainOf
+    // 3. Filter out items without source_url or without date (never fallback to '#')
     items = items.map(item => {
-      const matchingGrounding = groundingSources.find(g => 
-        (item.source_url && g.url.toLowerCase().includes(item.source_url.toLowerCase())) ||
-        (item.source_name && g.title.toLowerCase().includes(item.source_name.toLowerCase()))
+      const { verified: _discarded, ...rest } = item;
+      let sourceUrl = (rest.source_url || '').trim();
+      if (!sourceUrl && rest.source_name) {
+        const nameLower = rest.source_name.toLowerCase();
+        const found = groundingSources.find(g =>
+          g.title.toLowerCase().includes(nameLower) || g.url.toLowerCase().includes(nameLower)
+        );
+        if (found) {
+          sourceUrl = found.url;
+        }
+      }
+
+      const dom = domainOf(sourceUrl);
+      const isVerified = Boolean(
+        dom && groundingSources.some(g =>
+          g.url.toLowerCase().includes(dom) || g.title.toLowerCase().includes(dom)
+        )
       );
+
       return {
-        ...item,
-        source_url: item.source_url || matchingGrounding?.url || '#',
-        verified: matchingGrounding ? true : (item.verified ?? true),
+        ...rest,
+        thesis_relation: rest.thesis_relation === 'contradicts' ? 'contradicts' : 'supports',
+        source_url: sourceUrl,
+        verified: isVerified,
       };
     });
+
+    // Remove any items that lack a real source_url or date (no '#' fallback)
+    items = items.filter(item => Boolean(item.source_url && item.source_url !== '#' && item.date && String(item.date).trim()));
 
     return res.json({
       items,
