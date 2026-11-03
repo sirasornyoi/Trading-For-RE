@@ -82,6 +82,7 @@ export interface EvidenceItem {
   mechanism: string;
   side_basis: 'self-evident' | 'placed by model';
   verified: boolean;
-  thesis_relation: 'supports' | 'contradicts';
+  thesis_relation: 'supports' | 'contradicts' | 'unclear';
+  missing?: boolean;
 }
 

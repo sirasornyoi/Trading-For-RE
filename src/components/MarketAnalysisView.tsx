@@ -11,6 +11,7 @@ import {
   Calendar,
   CheckCircle2,
   Globe,
+  HelpCircle,
 } from 'lucide-react';
 
 interface MarketAnalysisViewProps {
@@ -87,6 +88,8 @@ export const MarketAnalysisView: React.FC<MarketAnalysisViewProps> = ({
     }
   };
 
+  const missingItems = items.filter(i => i.missing);
+  const validItems = items.filter(i => !i.missing);
   const verifiedCount = items.filter(i => i.verified).length;
 
   return (
@@ -199,11 +202,42 @@ export const MarketAnalysisView: React.FC<MarketAnalysisViewProps> = ({
         </div>
       )}
 
-      {/* Results Section: 3 Groups by Layer */}
+      {/* Results Section */}
       {items.length > 0 && (
         <div className="space-y-6">
+          {/* Missing Mandatory Topics Box (Gray Box on Top) */}
+          {missingItems.length > 0 && (
+            <div className="bg-slate-900 border border-slate-700/80 rounded-xl p-4 shadow-sm space-y-3">
+              <div className="flex items-center gap-2 border-b border-slate-800 pb-2">
+                <AlertCircle className="w-4 h-4 text-slate-400" />
+                <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider">
+                  หัวข้อบังคับที่ยังหาไม่เจอ ({missingItems.length})
+                </h3>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                {missingItems.map((item, idx) => (
+                  <div
+                    key={idx}
+                    className="bg-slate-950/70 border border-slate-800 rounded-lg p-2.5 text-xs text-slate-300 flex items-start justify-between gap-2"
+                  >
+                    <div className="space-y-0.5">
+                      <span className="font-semibold text-slate-200 block">{item.value}</span>
+                      {item.mechanism && (
+                        <span className="text-[11px] text-slate-500 block">{item.mechanism}</span>
+                      )}
+                    </div>
+                    <span className="text-[10px] text-slate-500 font-mono shrink-0 px-1.5 py-0.5 bg-slate-900 rounded border border-slate-800">
+                      {item.layer}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 3 Groups by Layer (Valid Items only) */}
           {LAYERS.map(layer => {
-            const layerItems = items.filter(i => i.layer === layer.key);
+            const layerItems = validItems.filter(i => i.layer === layer.key);
             const bullItems = layerItems
               .filter(i => i.side === 'bull')
               .sort((a, b) => (TIER_ORDER[a.tier] || 99) - (TIER_ORDER[b.tier] || 99));
@@ -281,19 +315,19 @@ export const MarketAnalysisView: React.FC<MarketAnalysisViewProps> = ({
             );
           })}
 
-          {/* Thesis Relation Section: 2 Boxes (List only, no scores) */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+          {/* Thesis Relation Section: 3 Boxes (List only, no scores) */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
             {/* หนุน thesis */}
             <div className="bg-slate-900 border border-emerald-900/40 rounded-xl p-4 shadow-sm space-y-3">
               <div className="flex items-center gap-2 border-b border-slate-800 pb-2">
                 <CheckCircle2 className="w-4 h-4 text-emerald-400" />
                 <h3 className="text-xs font-bold text-emerald-400 uppercase tracking-wider">หนุน thesis</h3>
               </div>
-              {items.filter(i => i.thesis_relation === 'supports').length === 0 ? (
+              {validItems.filter(i => i.thesis_relation === 'supports').length === 0 ? (
                 <p className="text-xs text-slate-500">ไม่มีหลักฐานที่ระบุว่าหนุน thesis</p>
               ) : (
                 <div className="space-y-2">
-                  {items.filter(i => i.thesis_relation === 'supports').map((item, idx) => (
+                  {validItems.filter(i => i.thesis_relation === 'supports').map((item, idx) => (
                     <div key={idx} className="bg-slate-950/70 border border-slate-800/80 rounded-lg p-2.5 text-xs space-y-1">
                       <div className="flex items-center gap-2 text-[10px] text-slate-400">
                         <span className="font-bold text-purple-300 font-mono">[{item.tier}]</span>
@@ -313,11 +347,35 @@ export const MarketAnalysisView: React.FC<MarketAnalysisViewProps> = ({
                 <AlertCircle className="w-4 h-4 text-rose-400" />
                 <h3 className="text-xs font-bold text-rose-400 uppercase tracking-wider">ขัด thesis</h3>
               </div>
-              {items.filter(i => i.thesis_relation === 'contradicts').length === 0 ? (
+              {validItems.filter(i => i.thesis_relation === 'contradicts').length === 0 ? (
                 <p className="text-xs text-slate-500">ไม่มีหลักฐานที่ระบุว่าขัด thesis</p>
               ) : (
                 <div className="space-y-2">
-                  {items.filter(i => i.thesis_relation === 'contradicts').map((item, idx) => (
+                  {validItems.filter(i => i.thesis_relation === 'contradicts').map((item, idx) => (
+                    <div key={idx} className="bg-slate-950/70 border border-slate-800/80 rounded-lg p-2.5 text-xs space-y-1">
+                      <div className="flex items-center gap-2 text-[10px] text-slate-400">
+                        <span className="font-bold text-purple-300 font-mono">[{item.tier}]</span>
+                        <span className="text-slate-300 font-medium">{item.source_name}</span>
+                        <span className="text-slate-500 font-mono">{item.date}</span>
+                      </div>
+                      <p className="text-slate-200 text-[11px] leading-relaxed">{item.value}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* ยังไม่ชัดว่าหนุนหรือขัด */}
+            <div className="bg-slate-900 border border-slate-700/60 rounded-xl p-4 shadow-sm space-y-3">
+              <div className="flex items-center gap-2 border-b border-slate-800 pb-2">
+                <HelpCircle className="w-4 h-4 text-amber-400" />
+                <h3 className="text-xs font-bold text-amber-400 uppercase tracking-wider">ยังไม่ชัดว่าหนุนหรือขัด</h3>
+              </div>
+              {validItems.filter(i => i.thesis_relation === 'unclear').length === 0 ? (
+                <p className="text-xs text-slate-500">ไม่มีหลักฐานที่ยังไม่ชัดเจน</p>
+              ) : (
+                <div className="space-y-2">
+                  {validItems.filter(i => i.thesis_relation === 'unclear').map((item, idx) => (
                     <div key={idx} className="bg-slate-950/70 border border-slate-800/80 rounded-lg p-2.5 text-xs space-y-1">
                       <div className="flex items-center gap-2 text-[10px] text-slate-400">
                         <span className="font-bold text-purple-300 font-mono">[{item.tier}]</span>

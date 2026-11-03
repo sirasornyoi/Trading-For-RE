@@ -24,6 +24,12 @@ function domainOf(urlStr: string): string {
   }
 }
 
+function isGoogleDomain(dom: string): boolean {
+  if (!dom) return false;
+  const d = dom.toLowerCase();
+  return d === 'vertexaisearch.cloud.google.com' || d === 'google.com' || d.endsWith('.google.com');
+}
+
 // API endpoint for AI Market Evidence Analysis with Google Search Grounding
 app.post('/api/analyze', async (req, res) => {
   try {
@@ -55,7 +61,7 @@ Rules:
 4. For each item, determine:
    - layer: "Fundamental" | "Technical" | "News"
    - side: "bull" | "bear" (market price direction)
-   - thesis_relation: "supports" | "contradicts" (evaluate specifically against User Thesis: does this evidence support or contradict the user's thesis?)
+   - thesis_relation: "supports" | "contradicts" | "unclear" (evaluate specifically against User Thesis: does this evidence support, contradict, or is it unclear relative to user thesis?)
    - label: "FACT" | "INFER" | "SPEC"
    - tier: "T1" | "T2" | "T3"
    - value: Thai language concise explanation of the finding (with as of date)
@@ -64,6 +70,7 @@ Rules:
    - date: Date of the report or event in YYYY-MM-DD format
    - mechanism: Thai explanation of the economic mechanism impacting ${symbol}
    - side_basis: "self-evident" | "placed by model"
+   - missing: true if this topic was not found ("ไม่พบข้อมูล"), false otherwise
 
 Format your entire response as a valid JSON object with an "items" array:
 \`\`\`json
@@ -80,7 +87,8 @@ Format your entire response as a valid JSON object with an "items" array:
       "source_url": "https://...",
       "date": "YYYY-MM-DD",
       "mechanism": "...",
-      "side_basis": "self-evident"
+      "side_basis": "self-evident",
+      "missing": false
     }
   ]
 }
@@ -130,39 +138,63 @@ Format your entire response as a valid JSON object with an "items" array:
     }
 
     // Process items:
-    // 1. If item has no source_url, check if any groundingSource matches source_name
-    // 2. Discard model's verified property and verify only via domainOf
-    // 3. Filter out items without source_url or without date (never fallback to '#')
+    // 1. Identify missing topics (value contains "ไม่พบข้อมูล" or missing: true)
+    // 2. Google redirect domains (vertexaisearch, google.com) must always be verified = false
+    // 3. Match item domain against g.title only (not g.url)
+    // 4. If fallback grounding URL used: verified = true only if g.title contains domain matching source_name
     items = items.map(item => {
       const { verified: _discarded, ...rest } = item;
+      const valStr = String(rest.value || '');
+      const isMissing = Boolean(rest.missing === true || valStr.includes('ไม่พบข้อมูล'));
+
       let sourceUrl = (rest.source_url || '').trim();
-      if (!sourceUrl && rest.source_name) {
-        const nameLower = rest.source_name.toLowerCase();
-        const found = groundingSources.find(g =>
-          g.title.toLowerCase().includes(nameLower) || g.url.toLowerCase().includes(nameLower)
-        );
-        if (found) {
-          sourceUrl = found.url;
+      let isVerified = false;
+
+      if (!sourceUrl) {
+        if (rest.source_name) {
+          const nameLower = rest.source_name.toLowerCase().trim();
+          const found = groundingSources.find(g =>
+            g.title && g.title.toLowerCase().includes(nameLower)
+          );
+          if (found) {
+            sourceUrl = found.url;
+            const titleLower = (found.title || '').toLowerCase();
+            const nameDom = domainOf(rest.source_name);
+            const matches = titleLower.includes(nameLower) || (nameDom && titleLower.includes(nameDom));
+            isVerified = Boolean(matches);
+          }
+        }
+      } else {
+        const dom = domainOf(sourceUrl);
+        if (isGoogleDomain(dom)) {
+          isVerified = false;
+        } else {
+          // Check item domain against g.title ONLY (never g.url)
+          isVerified = Boolean(
+            dom && groundingSources.some(g => g.title && g.title.toLowerCase().includes(dom))
+          );
         }
       }
 
-      const dom = domainOf(sourceUrl);
-      const isVerified = Boolean(
-        dom && groundingSources.some(g =>
-          g.url.toLowerCase().includes(dom) || g.title.toLowerCase().includes(dom)
-        )
-      );
+      let thesisRelation: 'supports' | 'contradicts' | 'unclear' = 'unclear';
+      if (rest.thesis_relation === 'supports') thesisRelation = 'supports';
+      else if (rest.thesis_relation === 'contradicts') thesisRelation = 'contradicts';
+      else thesisRelation = 'unclear';
 
       return {
         ...rest,
-        thesis_relation: rest.thesis_relation === 'contradicts' ? 'contradicts' : 'supports',
+        missing: isMissing,
+        thesis_relation: thesisRelation,
         source_url: sourceUrl,
-        verified: isVerified,
+        verified: isMissing ? false : isVerified,
       };
     });
 
-    // Remove any items that lack a real source_url or date (no '#' fallback)
-    items = items.filter(item => Boolean(item.source_url && item.source_url !== '#' && item.date && String(item.date).trim()));
+    // Remove any items that lack a real source_url or date (no '#' fallback), but EXEMPT items where missing = true
+    items = items.filter(item => {
+      if (item.missing) return true;
+      return Boolean(item.source_url && item.source_url !== '#' && item.date && String(item.date).trim());
+    });
 
     return res.json({
       items,
