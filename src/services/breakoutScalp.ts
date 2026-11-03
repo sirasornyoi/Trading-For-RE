@@ -63,7 +63,7 @@ export function getDefaultScalpConfigs(): Record<string, BreakoutScalpAssetConfi
       stopMode: 'candle_extreme',
       hasClearNarrative: false,
       isEventFirstCandle: false,
-      alertEnabled: true,
+      alertEnabled: false,
     };
   }
   return configs;
@@ -247,59 +247,66 @@ export function evaluateBreakoutScalp(
   const closedH4 = filterClosedCandles(h4Candles, 14400);
   const closedD1 = filterClosedCandles(d1Candles, 86400);
 
+  const hasLTF = closedLTF.length >= 26;
+  const hasH4 = closedH4.length >= 50;
+  const hasH1 = closedH1.length >= 50;
+  const hasD1 = closedD1.length >= 15;
+
   const lastClosed = closedLTF.length > 0 ? closedLTF[closedLTF.length - 1] : null;
   const currentPrice = lastClosed ? lastClosed.close : 0;
 
-  // 1. Precalculate indicators for HTF
-  const h4Closes = closedH4.map(c => c.close);
-  const h4EMA50Arr = calculateEMAValues(h4Closes, 50);
-  const h4EMA20Arr = calculateEMAValues(h4Closes, 20);
-  const h4ATRArr = calculateATR(closedH4, 14);
-
-  const h1Closes = closedH1.map(c => c.close);
-  const h1EMA50Arr = calculateEMAValues(h1Closes, 50);
-  const h1EMA20Arr = calculateEMAValues(h1Closes, 20);
-
-  const d1Closes = closedD1.map(c => c.close);
-  const d1RSIArr = calculateRSIValues(d1Closes, 14);
-  const d1ATRArr = calculateATR(closedD1, 14);
-
-  const ltfATRArr = calculateATR(closedLTF, 14);
-
-  const lastH4EMA50 = h4EMA50Arr.length > 0 ? h4EMA50Arr[h4EMA50Arr.length - 1] : 0;
-  const lastH4EMA20 = h4EMA20Arr.length > 0 ? h4EMA20Arr[h4EMA20Arr.length - 1] : 0;
-  const lastH4ATR = h4ATRArr.length > 0 ? h4ATRArr[h4ATRArr.length - 1] : 1;
-  const lastH4Close = h4Closes.length > 0 ? h4Closes[h4Closes.length - 1] : 0;
-
-  const lastH1EMA50 = h1EMA50Arr.length > 0 ? h1EMA50Arr[h1EMA50Arr.length - 1] : 0;
-  const lastH1EMA20 = h1EMA20Arr.length > 0 ? h1EMA20Arr[h1EMA20Arr.length - 1] : 0;
-  const lastH1Close = h1Closes.length > 0 ? h1Closes[h1Closes.length - 1] : 0;
-
-  const lastD1RSI = d1RSIArr.length > 0 ? d1RSIArr[d1RSIArr.length - 1] : 50;
-  const lastD1ATR = d1ATRArr.length > 0 ? d1ATRArr[d1ATRArr.length - 1] : 1;
-  const lastLtfATR = ltfATRArr.length > 0 ? ltfATRArr[ltfATRArr.length - 1] : 1;
-
-  // 120-day High / Low
-  const recentD120 = closedD1.slice(-120);
-  let high120 = -Infinity;
-  let low120 = Infinity;
-  for (const c of recentD120) {
-    if (c.high > high120) high120 = c.high;
-    if (c.low < low120) low120 = c.low;
+  // 1. Precalculate indicators only when data is strictly sufficient (NO FAKE FALLBACKS)
+  let h4EMA50 = 0;
+  let h4EMA20 = 0;
+  let h4ATR = 0;
+  let lastH4Close = 0;
+  if (hasH4) {
+    const h4Closes = closedH4.map(c => c.close);
+    const ema50Arr = calculateEMAValues(h4Closes, 50);
+    const ema20Arr = calculateEMAValues(h4Closes, 20);
+    const atrArr = calculateATR(closedH4, 14);
+    h4EMA50 = ema50Arr[ema50Arr.length - 1];
+    h4EMA20 = ema20Arr[ema20Arr.length - 1];
+    h4ATR = atrArr[atrArr.length - 1];
+    lastH4Close = h4Closes[h4Closes.length - 1];
   }
-  const distHigh120 = high120 > -Infinity ? Math.abs(currentPrice - high120) : Infinity;
-  const distLow120 = low120 < Infinity ? Math.abs(currentPrice - low120) : Infinity;
 
-  // Extreme condition check
-  const distH4EMA50 = Math.abs(currentPrice - lastH4EMA50);
-  const isExtremeH4 = distH4EMA50 > 2 * lastH4ATR;
-  const isExtremeD1RSI = lastD1RSI > 70 || lastD1RSI < 30;
-  const isExtreme120 = distHigh120 <= 1 * lastD1ATR || distLow120 <= 1 * lastD1ATR;
-  const isExtremeZone = isExtremeH4 || isExtremeD1RSI || isExtreme120;
+  let h1EMA50 = 0;
+  let h1EMA20 = 0;
+  let lastH1Close = 0;
+  if (hasH1) {
+    const h1Closes = closedH1.map(c => c.close);
+    const ema50Arr = calculateEMAValues(h1Closes, 50);
+    const ema20Arr = calculateEMAValues(h1Closes, 20);
+    h1EMA50 = ema50Arr[ema50Arr.length - 1];
+    h1EMA20 = ema20Arr[ema20Arr.length - 1];
+    lastH1Close = h1Closes[h1Closes.length - 1];
+  }
+
+  let d1RSI = 0;
+  let d1ATR = 0;
+  let high120 = 0;
+  let low120 = 0;
+  if (hasD1) {
+    const d1Closes = closedD1.map(c => c.close);
+    const rsiArr = calculateRSIValues(d1Closes, 14);
+    const atrArr = calculateATR(closedD1, 14);
+    d1RSI = rsiArr[rsiArr.length - 1];
+    d1ATR = atrArr[atrArr.length - 1];
+
+    const recentD120 = closedD1.slice(-120);
+    high120 = Math.max(...recentD120.map(c => c.high));
+    low120 = Math.min(...recentD120.map(c => c.low));
+  }
+
+  const ltfATRArr = hasLTF ? calculateATR(closedLTF, 14) : [];
+  const lastLtfATR = ltfATRArr.length > 0 ? ltfATRArr[ltfATRArr.length - 1] : 0;
 
   // --- Step 4 Check first: Find Trigger Candle within last 10 closed bars ---
   let triggerEval: TriggerEvaluation | null = null;
-  if (level !== null && level > 0 && closedLTF.length >= 25) {
+  let hasAvgVolZero = false;
+
+  if (level !== null && level > 0 && hasLTF) {
     const maxSearchBars = Math.min(10, closedLTF.length - 21);
     for (let offset = 0; offset < maxSearchBars; offset++) {
       const idx = closedLTF.length - 1 - offset;
@@ -308,6 +315,10 @@ export function evaluateBreakoutScalp(
       // 20 bars prior to this candle
       const prior20 = closedLTF.slice(idx - 20, idx);
       const avgVol20 = prior20.reduce((sum, b) => sum + (b.volume || 0), 0) / 20;
+
+      if (avgVol20 === 0) {
+        hasAvgVolZero = true;
+      }
 
       // Prior 5 bars
       const prior5 = closedLTF.slice(idx - 5, idx);
@@ -321,7 +332,6 @@ export function evaluateBreakoutScalp(
         const closeAboveLevel = c.close > level;
         const closeAbove5High = c.close > maxHigh5;
         if (volPasses && closeAboveLevel && closeAbove5High) {
-          // Check short covering warning: green candle close doesn't exceed open of preceding red candle
           const prevCandle = closedLTF[idx - 1];
           const isGreen = c.close >= c.open;
           const prevIsRed = prevCandle ? prevCandle.close < prevCandle.open : false;
@@ -354,100 +364,168 @@ export function evaluateBreakoutScalp(
   }
 
   // --- Step 0: Setup + Zone ---
-  let step0Status: ChecklistItemResult['status'] = 'pass';
-  let step0Inference = 'Setup สอดคล้องกับโซน';
-  const step0Facts: string[] = [
-    `Setup=${config.setup}`,
-    `Fund=${config.fundDirection === 'up' ? 'ขึ้น' : config.fundDirection === 'down' ? 'ลง' : 'ไม่ชัด'}`,
-    `ห่าง EMA50(H4)=${distH4EMA50.toFixed(config.decimals)} (2×ATR=${(2 * lastH4ATR).toFixed(config.decimals)})`,
-    `RSI(D1)=${lastD1RSI.toFixed(1)}`,
-  ];
-
-  if (config.fundDirection === 'unclear') {
-    step0Status = 'unknown';
-    step0Inference = 'Fund ไม่ชัดเจน กรุณาระบุทิศทาง Fundamental';
+  if (!hasH4 || !hasD1 || !hasLTF) {
+    const missing: string[] = [];
+    if (!hasH4) missing.push(`H4 (${closedH4.length}/50)`);
+    if (!hasD1) missing.push(`D1 (${closedD1.length}/15)`);
+    if (!hasLTF) missing.push(`LTF (${closedLTF.length}/26)`);
+    items.push({
+      step: 0,
+      title: 'Setup + Zone',
+      fact: `ข้อมูลแท่งเทียนไม่เพียงพอ: ${missing.join(', ')}`,
+      inference: `ข้อมูลไม่พอ: ${missing.map(m => m.split(' ')[0]).join(', ')}`,
+      status: 'unknown',
+    });
   } else {
-    const isFundAligned = (side === 'bull' && config.fundDirection === 'up') || (side === 'bear' && config.fundDirection === 'down');
-    if (config.setup === 'Trend' || config.setup === 'Rebound') {
-      if (!isFundAligned) {
-        step0Status = 'fail';
-        step0Inference = `${config.setup} ต้องไปทางเดียวกับ Fund`;
-      } else if (isExtremeZone) {
-        step0Status = 'fail';
-        step0Inference = 'ไม่ไล่ (ราคาอยู่โซนสุดขั้วตามทาง Fund)';
-      } else {
-        step0Status = 'pass';
-        step0Inference = `${config.setup} ไปตามทิศทาง Fund และไม่อยู่ในโซนสุดขั้ว`;
-      }
-    } else if (config.setup === 'Impulse') {
-      if (isFundAligned) {
-        step0Status = 'fail';
-        step0Inference = 'Impulse ต้องเป็นเทรดสวนทาง Fund';
-      } else {
-        step0Status = 'pass';
-        step0Inference = 'Impulse สวนทาง Fund ตามกลยุทธ์';
+    const diffH4 = currentPrice - h4EMA50;
+    const atrMultipleH4 = h4ATR > 0 ? diffH4 / h4ATR : 0;
+    const distHigh120 = Math.abs(high120 - currentPrice);
+    const distLow120 = Math.abs(currentPrice - low120);
+
+    // Extreme definitions (signed / directional)
+    // extremeUp = (close - EMA50 H4) > 2×ATR H4 หรือ RSI D1 > 70 หรือ ห่าง high 120 วัน ≤ 1×ATR D1
+    // extremeDown = (close - EMA50 H4) < -2×ATR H4 หรือ RSI D1 < 30 หรือ ห่าง low 120 วัน ≤ 1×ATR D1
+    const extremeUp = (diffH4 > 2 * h4ATR) || (d1RSI > 70) || (distHigh120 <= 1 * d1ATR);
+    const extremeDown = (diffH4 < -2 * h4ATR) || (d1RSI < 30) || (distLow120 <= 1 * d1ATR);
+
+    let extremeDesc = 'ไม่อยู่ในโซนสุดขั้ว';
+    if (extremeUp && extremeDown) extremeDesc = 'สุดขั้วทั้งสองฝั่ง (ผันผวนสูง)';
+    else if (extremeUp) extremeDesc = 'สุดขั้วฝั่งขึ้น';
+    else if (extremeDown) extremeDesc = 'สุดขั้วฝั่งลง';
+
+    const step0Fact = `ห่าง EMA50 H4=${diffH4 >= 0 ? '+' : ''}${atrMultipleH4.toFixed(1)}×ATR (${diffH4 >= 0 ? '+' : ''}${diffH4.toFixed(config.decimals)}) · RSI D1=${d1RSI.toFixed(1)} · High120=${high120.toFixed(config.decimals)}, Low120=${low120.toFixed(config.decimals)} · โซน=${extremeDesc}`;
+
+    let step0Status: ChecklistItemResult['status'] = 'pass';
+    let step0Inference = '';
+
+    if (config.fundDirection === 'unclear') {
+      step0Status = 'unknown';
+      step0Inference = 'Fund ไม่ชัดเจน กรุณาระบุทิศทาง Fundamental';
+    } else {
+      const isFundAligned = (side === 'bull' && config.fundDirection === 'up') || (side === 'bear' && config.fundDirection === 'down');
+
+      if (config.setup === 'Trend') {
+        if (!isFundAligned) {
+          step0Status = 'fail';
+          step0Inference = 'Trend ต้องไปทางเดียวกับ fund';
+        } else if ((config.fundDirection === 'up' && extremeUp) || (config.fundDirection === 'down' && extremeDown)) {
+          step0Status = 'fail';
+          step0Inference = 'ไม่ไล่ (ราคาอยู่โซนสุดขั้วตามทาง Fund)';
+        } else {
+          step0Status = 'pass';
+          step0Inference = 'Trend ไปตามทาง Fund และไม่อยู่ในโซนสุดขั้วตามทาง Fund';
+        }
+      } else if (config.setup === 'Rebound') {
+        // Rebound ต้องไปทาง fund
+        if (!isFundAligned) {
+          step0Status = 'fail';
+          step0Inference = 'Rebound ต้องไปทางเดียวกับ fund';
+        } else if ((config.fundDirection === 'up' && extremeUp) || (config.fundDirection === 'down' && extremeDown)) {
+          step0Status = 'fail';
+          step0Inference = 'ไม่ไล่ (ราคาอยู่โซนสุดขั้วตามทาง Fund)';
+        } else if ((config.fundDirection === 'up' && extremeDown) || (config.fundDirection === 'down' && extremeUp)) {
+          step0Status = 'pass';
+          step0Inference = 'สุดขั้วสวน fund → เข้าลักษณะ Rebound (ยืนยันเองว่า fund ไม่ได้เปลี่ยนจริง)';
+        } else {
+          step0Status = 'warn';
+          step0Inference = 'ยังไม่พบภาวะสุดขั้วสวน fund';
+        }
+      } else if (config.setup === 'Impulse') {
+        // Impulse ต้องสวน fund
+        if (isFundAligned) {
+          step0Status = 'fail';
+          step0Inference = 'Impulse ต้องเป็นเทรดสวนทาง Fund';
+        } else {
+          step0Status = 'pass';
+          step0Inference = 'Impulse สวนทาง Fund ตามกลยุทธ์';
+        }
       }
     }
+
+    items.push({
+      step: 0,
+      title: 'Setup + Zone',
+      fact: step0Fact,
+      inference: step0Inference,
+      status: step0Status,
+    });
   }
-  items.push({
-    step: 0,
-    title: 'Setup + Zone',
-    fact: step0Facts.join(' · '),
-    inference: step0Inference,
-    status: step0Status,
-  });
 
   // --- Step 1: Context ---
-  let step1Status: ChecklistItemResult['status'] = 'pass';
-  let step1Inference = '';
-  // Check H4 trend: close and EMA20 on same side of EMA50
-  const h4Bull = lastH4Close > lastH4EMA50 && lastH4EMA20 > lastH4EMA50;
-  const h4Bear = lastH4Close < lastH4EMA50 && lastH4EMA20 < lastH4EMA50;
-  const h1Bull = lastH1Close > lastH1EMA50 && lastH1EMA20 > lastH1EMA50;
-  const h1Bear = lastH1Close < lastH1EMA50 && lastH1EMA20 < lastH1EMA50;
+  if (!hasH4 || !hasH1) {
+    const missing: string[] = [];
+    if (!hasH4) missing.push(`H4 (${closedH4.length}/50)`);
+    if (!hasH1) missing.push(`H1 (${closedH1.length}/50)`);
+    items.push({
+      step: 1,
+      title: 'Context',
+      fact: `ข้อมูลแท่งเทียนไม่เพียงพอ: ${missing.join(', ')}`,
+      inference: `ข้อมูลไม่พอ: ${missing.map(m => m.split(' ')[0]).join(', ')}`,
+      status: 'unknown',
+    });
+  } else {
+    const h4Bull = lastH4Close > h4EMA50 && h4EMA20 > h4EMA50;
+    const h4Bear = lastH4Close < h4EMA50 && h4EMA20 < h4EMA50;
+    const h1Bull = lastH1Close > h1EMA50 && h1EMA20 > h1EMA50;
+    const h1Bear = lastH1Close < h1EMA50 && h1EMA20 < h1EMA50;
 
-  const targetSideBull = side === 'bull';
-  const htfAligned = targetSideBull ? (h4Bull && h1Bull) : (h4Bear && h1Bear);
+    const targetSideBull = side === 'bull';
+    const htfAligned = targetSideBull ? (h4Bull && h1Bull) : (h4Bear && h1Bear);
 
-  if (config.setup === 'Trend' || config.setup === 'Rebound') {
-    const fundAligned = targetSideBull ? config.fundDirection === 'up' : config.fundDirection === 'down';
-    if (fundAligned && htfAligned) {
-      step1Status = 'pass';
-      step1Inference = 'Fund + H4 + H1 ตรงทิศเดียวกัน';
-    } else {
-      step1Status = 'fail';
-      step1Inference = 'Context ไม่ตรงทิศ (ต้องการ Fund + H4 + H1 สอดคล้องกัน)';
+    let step1Status: ChecklistItemResult['status'] = 'pass';
+    let step1Inference = '';
+
+    if (config.setup === 'Trend' || config.setup === 'Rebound') {
+      const fundAligned = targetSideBull ? config.fundDirection === 'up' : config.fundDirection === 'down';
+      if (fundAligned && htfAligned) {
+        step1Status = 'pass';
+        step1Inference = 'Fund + H4 + H1 ตรงทิศเดียวกัน';
+      } else {
+        step1Status = 'fail';
+        step1Inference = 'Context ไม่ตรงทิศ (ต้องการ Fund + H4 + H1 สอดคล้องกัน)';
+      }
+    } else if (config.setup === 'Impulse') {
+      // Impulse Checklist เรียงลำดับตรวจใหม่:
+      // 1. ไม่ติ๊ก narrative -> ❌
+      if (!config.hasClearNarrative) {
+        step1Status = 'fail';
+        step1Inference = 'ขาด Narrative ที่ชัดเจน';
+      } else {
+        // 2. vol 3 แท่ง (นับถึงแท่ง trigger ถ้ามี) ไม่ไต่ขึ้นต่อเนื่อง -> ❌ "vol ยังไม่ไต่ต่อเนื่อง"
+        const endIdx = triggerEval ? triggerEval.triggerIndex : closedLTF.length - 1;
+        let vol3Rising = false;
+        let v0 = 0, v1 = 0, v2 = 0;
+        if (endIdx >= 2 && closedLTF.length >= 3) {
+          v0 = closedLTF[endIdx - 2].volume || 0;
+          v1 = closedLTF[endIdx - 1].volume || 0;
+          v2 = closedLTF[endIdx].volume || 0;
+          vol3Rising = v2 > v1 && v1 > v0;
+        }
+
+        if (!vol3Rising) {
+          step1Status = 'fail';
+          step1Inference = 'vol ยังไม่ไต่ต่อเนื่อง';
+        } else {
+          // 3. ผ่านทั้งสองแต่สวน H4/H1 -> ⚠️ "เสี่ยงกลับตัวเร็ว" / ไม่สวน -> ✅
+          if (!htfAligned) {
+            step1Status = 'warn';
+            step1Inference = 'เสี่ยงกลับตัวเร็ว';
+          } else {
+            step1Status = 'pass';
+            step1Inference = 'Narrative ชัด + Vol ไต่ต่อเนื่อง + ทิศทางสอดคล้อง';
+          }
+        }
+      }
     }
-  } else if (config.setup === 'Impulse') {
-    // 3 consecutive rising volumes in closed LTF
-    let vol3Rising = false;
-    if (closedLTF.length >= 3) {
-      const v0 = closedLTF[closedLTF.length - 1].volume || 0;
-      const v1 = closedLTF[closedLTF.length - 2].volume || 0;
-      const v2 = closedLTF[closedLTF.length - 3].volume || 0;
-      vol3Rising = v0 > v1 && v1 > v2;
-    }
-    if (!config.hasClearNarrative) {
-      step1Status = 'fail';
-      step1Inference = 'ขาด Narrative ที่ชัดเจน';
-    } else if (!htfAligned) {
-      step1Status = 'warn';
-      step1Inference = 'เสี่ยงกลับตัวเร็ว (Impulse สวน HTF H4/H1)';
-    } else if (vol3Rising) {
-      step1Status = 'pass';
-      step1Inference = 'Narrative ชัด + Volume 3 แท่งไต่ระดับขึ้น';
-    } else {
-      step1Status = 'warn';
-      step1Inference = 'Volume 3 แท่งยังไม่ไต่ระดับขึ้นอย่างชัดเจน';
-    }
+
+    items.push({
+      step: 1,
+      title: 'Context',
+      fact: `H4=${h4Bull ? 'Bull' : h4Bear ? 'Bear' : 'Mixed'} (EMA20=${h4EMA20.toFixed(config.decimals)}, EMA50=${h4EMA50.toFixed(config.decimals)}) · H1=${h1Bull ? 'Bull' : h1Bear ? 'Bear' : 'Mixed'} · Narrative=${config.hasClearNarrative ? 'มี' : 'ไม่มี'}`,
+      inference: step1Inference,
+      status: step1Status,
+    });
   }
-  items.push({
-    step: 1,
-    title: 'Context',
-    fact: `H4=${h4Bull ? 'Bull' : h4Bear ? 'Bear' : 'Mixed'} (EMA20=${lastH4EMA20.toFixed(config.decimals)}, EMA50=${lastH4EMA50.toFixed(config.decimals)}) · H1=${h1Bull ? 'Bull' : h1Bear ? 'Bear' : 'Mixed'} · Narrative=${config.hasClearNarrative ? 'มี' : 'ไม่มี'}`,
-    inference: step1Inference,
-    status: step1Status,
-  });
 
   // --- Step 2: Level ---
   let step2Status: ChecklistItemResult['status'] = 'pass';
@@ -481,11 +559,24 @@ export function evaluateBreakoutScalp(
   });
 
   // --- Step 3: Compression ---
-  let step3Status: ChecklistItemResult['status'] = 'fail';
-  let step3Inference = '';
-  let step3Fact = '';
-  const refIndex = triggerEval ? triggerEval.triggerIndex : closedLTF.length - 1;
-  if (closedLTF.length >= 26 && refIndex >= 25 && level !== null) {
+  if (!hasLTF) {
+    items.push({
+      step: 3,
+      title: 'Compression',
+      fact: `ข้อมูลแท่งเทียน LTF ไม่เพียงพอ (${closedLTF.length}/26 แท่ง)`,
+      inference: 'ข้อมูลไม่พอ: LTF',
+      status: 'unknown',
+    });
+  } else if (level === null || level <= 0) {
+    items.push({
+      step: 3,
+      title: 'Compression',
+      fact: 'ยังไม่ได้กำหนดเส้นระดับราคา',
+      inference: 'รอการกำหนดเส้นระดับราคา',
+      status: 'unknown',
+    });
+  } else {
+    const refIndex = triggerEval ? triggerEval.triggerIndex : closedLTF.length - 1;
     const prior5 = closedLTF.slice(refIndex - 5, refIndex);
     const prior20 = closedLTF.slice(refIndex - 25, refIndex - 5);
 
@@ -495,41 +586,65 @@ export function evaluateBreakoutScalp(
     const avgVol5 = prior5.reduce((sum, c) => sum + (c.volume || 0), 0) / 5;
     const avgVol20 = prior20.reduce((sum, c) => sum + (c.volume || 0), 0) / 20;
 
-    const rangeCompressed = avgRange5 < avgRange20;
-    const volCompressed = avgVol5 < avgVol20;
-
-    const distToLine = Math.min(...prior5.map(c => Math.abs(c.close - level)));
-    const nearLine = distToLine <= 1.0 * lastLtfATR;
-
-    step3Fact = `Range 5บาร์=${avgRange5.toFixed(config.decimals)} (vs 20บาร์=${avgRange20.toFixed(config.decimals)}) · Vol 5บาร์=${Math.round(avgVol5)} (vs 20บาร์=${Math.round(avgVol20)}) · ห่างเส้น=${distToLine.toFixed(config.decimals)} (1×ATR=${lastLtfATR.toFixed(config.decimals)})`;
-
-    if (rangeCompressed && volCompressed && nearLine) {
-      step3Status = 'pass';
-      step3Inference = 'Range & Vol บีบตัวต่ำกว่า 20 บาร์ก่อนหน้า + เกาะชิดเส้น';
+    if (avgVol20 === 0) {
+      items.push({
+        step: 3,
+        title: 'Compression',
+        fact: 'Volume เฉลี่ย 20 แท่ง = 0',
+        inference: 'ข้อมูลไม่พอ: Volume เฉลี่ย 20 แท่ง = 0',
+        status: 'unknown',
+      });
     } else {
-      step3Status = 'fail';
-      step3Inference = 'ยังไม่เกิดการบีบตัว (Compression) ก่อนถึงเส้น';
+      const rangeCompressed = avgRange5 < avgRange20;
+      const volCompressed = avgVol5 < avgVol20;
+      const distToLine = Math.min(...prior5.map(c => Math.abs(c.close - level)));
+      const nearLine = lastLtfATR > 0 ? distToLine <= 1.0 * lastLtfATR : true;
+
+      const step3Fact = `Range 5บาร์=${avgRange5.toFixed(config.decimals)} (vs 20บาร์=${avgRange20.toFixed(config.decimals)}) · Vol 5บาร์=${Math.round(avgVol5)} (vs 20บาร์=${Math.round(avgVol20)}) · ห่างเส้น=${distToLine.toFixed(config.decimals)} (1×ATR=${lastLtfATR.toFixed(config.decimals)})`;
+      let step3Status: ChecklistItemResult['status'] = 'pass';
+      let step3Inference = '';
+
+      if (rangeCompressed && volCompressed && nearLine) {
+        step3Status = 'pass';
+        step3Inference = 'Range & Vol บีบตัวต่ำกว่า 20 บาร์ก่อนหน้า + เกาะชิดเส้น';
+      } else {
+        step3Status = 'fail';
+        step3Inference = 'ยังไม่เกิดการบีบตัว (Compression) ก่อนถึงเส้น';
+      }
+
+      items.push({
+        step: 3,
+        title: 'Compression',
+        fact: step3Fact,
+        inference: step3Inference,
+        status: step3Status,
+      });
     }
-  } else {
-    step3Fact = 'ข้อมูลแท่งเทียนไม่เพียงพอ (ต้องการอย่างน้อย 26 แท่งปิด)';
-    step3Inference = 'ยังไม่สามารถตรวจวัด Compression';
-    step3Status = 'unknown';
   }
-  items.push({
-    step: 3,
-    title: 'Compression',
-    fact: step3Fact,
-    inference: step3Inference,
-    status: step3Status,
-  });
 
   // --- Step 4: Trigger ---
-  let step4Status: ChecklistItemResult['status'] = 'fail';
-  let step4Inference = '';
-  let step4Fact = '';
-  if (triggerEval) {
+  if (!hasLTF) {
+    items.push({
+      step: 4,
+      title: 'Trigger',
+      fact: `ข้อมูลแท่งเทียน LTF ไม่เพียงพอ (${closedLTF.length}/26 แท่ง)`,
+      inference: 'ข้อมูลไม่พอ: LTF',
+      status: 'unknown',
+    });
+  } else if (hasAvgVolZero) {
+    items.push({
+      step: 4,
+      title: 'Trigger',
+      fact: 'Volume เฉลี่ย 20 แท่ง = 0',
+      inference: 'ข้อมูลไม่พอ: Volume เฉลี่ย 20 แท่ง = 0',
+      status: 'unknown',
+    });
+  } else if (triggerEval) {
     const triggerTime = new Date(triggerEval.triggerCandle.time * 1000).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
-    step4Fact = `แท่ง ${triggerTime} (ย้อนหลัง ${triggerEval.barsAgo} บาร์) ปิด=${triggerEval.triggerCandle.close.toFixed(config.decimals)} · Vol=${triggerEval.volumeRatio}× เฉลี่ย 20`;
+    const step4Fact = `แท่ง ${triggerTime} (ย้อนหลัง ${triggerEval.barsAgo} บาร์) ปิด=${triggerEval.triggerCandle.close.toFixed(config.decimals)} · Vol=${triggerEval.volumeRatio}× เฉลี่ย 20`;
+    let step4Status: ChecklistItemResult['status'] = 'pass';
+    let step4Inference = '';
+
     if (triggerEval.isShortCoveringWarning) {
       step4Status = 'warn';
       step4Inference = 'อาจแค่ short covering (แท่งเขียวปิดไม่เกิน open ของแท่งแดงก่อนหน้า)';
@@ -537,96 +652,160 @@ export function evaluateBreakoutScalp(
       step4Status = 'pass';
       step4Inference = `เข้าเงื่อนไข Trigger ทะลุเส้นปิด ${side === 'bull' ? 'เหนือ' : 'ใต้'}เส้น และ Vol >= 2×`;
     }
-  } else {
-    step4Fact = `ย้อนหลัง 10 แท่งปิดล่าสุด ไม่มีแท่งที่ปิดทะลุเส้น ${level !== null ? level.toFixed(config.decimals) : '-'} พร้อม Vol >= 2×`;
-    step4Inference = 'ยังไม่พบแท่ง Trigger (ไส้ทะลุแต่เนื้อไม่ปิดข้ามเส้นไม่นับ)';
-    step4Status = 'fail';
-  }
-  items.push({
-    step: 4,
-    title: 'Trigger',
-    fact: step4Fact,
-    inference: step4Inference,
-    status: step4Status,
-  });
 
-  // --- Step 5, 6, 8: Entry, Stop, R/R Calculation ---
+    items.push({
+      step: 4,
+      title: 'Trigger',
+      fact: step4Fact,
+      inference: step4Inference,
+      status: step4Status,
+    });
+  } else {
+    items.push({
+      step: 4,
+      title: 'Trigger',
+      fact: `ย้อนหลัง 10 แท่งปิดล่าสุด ไม่มีแท่งที่ปิดทะลุเส้น ${level !== null ? level.toFixed(config.decimals) : '-'} พร้อม Vol >= 2×`,
+      inference: 'ยังไม่พบแท่ง Trigger (ไส้ทะลุแต่เนื้อไม่ปิดข้ามเส้นไม่นับ)',
+      status: 'fail',
+    });
+  }
+
+  // --- Step 5, 6, 8: Entry, Stop, R/R Calculation (NO Math.abs!) ---
+  const dir = side === 'bull' ? 1 : -1;
   let entryPrice: number | null = null;
   let stopPrice: number | null = null;
   let riskAmount: number | null = null;
+  let rewardAmount: number | null = null;
   let target3R: number | null = null;
   let actualRR: number | null = null;
+  let isWaitingBreakoutCandle = false;
+
+  const realTarget = side === 'bull' ? config.targetBull : config.targetBear;
 
   if (level !== null && level > 0) {
-    const triggerCandle = triggerEval ? triggerEval.triggerCandle : lastClosed;
-    const triggerClose = triggerCandle ? triggerCandle.close : level;
-    const triggerLow = triggerCandle ? triggerCandle.low : level;
-    const triggerHigh = triggerCandle ? triggerCandle.high : level;
-
-    // Entry Price
+    // 1. Entry price
     if (config.entryMode === 'immediate') {
-      entryPrice = side === 'bull' ? triggerClose + config.buffer : triggerClose - config.buffer;
+      if (triggerEval) {
+        entryPrice = side === 'bull' ? triggerEval.triggerCandle.close + config.buffer : triggerEval.triggerCandle.close - config.buffer;
+      } else {
+        entryPrice = side === 'bull' ? level + config.buffer : level - config.buffer;
+      }
     } else {
+      // Retest mode
       entryPrice = side === 'bull' ? level + config.buffer : level - config.buffer;
     }
 
-    // Stop Price
+    // 2. Stop price
     if (config.stopMode === 'beyond_line') {
       stopPrice = side === 'bull' ? level - config.buffer : level + config.buffer;
     } else {
-      stopPrice = side === 'bull' ? triggerLow - config.buffer : triggerHigh + config.buffer;
+      // candle_extreme: ห้ามใช้แท่งปิดล่าสุดแทน ถ้ายังไม่มีแท่ง trigger
+      if (triggerEval) {
+        stopPrice = side === 'bull' ? triggerEval.triggerCandle.low - config.buffer : triggerEval.triggerCandle.high + config.buffer;
+      } else {
+        isWaitingBreakoutCandle = true;
+        stopPrice = null;
+      }
     }
 
-    riskAmount = Math.abs(entryPrice - stopPrice);
-    target3R = side === 'bull' ? entryPrice + 3 * riskAmount : entryPrice - 3 * riskAmount;
+    // 3. Risk and Reward (Signed calculation: (entry - stop)*dir, (target - entry)*dir)
+    if (entryPrice !== null && stopPrice !== null) {
+      riskAmount = (entryPrice - stopPrice) * dir;
+      if (riskAmount > 0) {
+        target3R = side === 'bull' ? entryPrice + 3 * riskAmount : entryPrice - 3 * riskAmount;
+      }
 
-    const realTarget = side === 'bull' ? config.targetBull : config.targetBear;
-    if (realTarget !== null && realTarget > 0 && riskAmount > 0) {
-      const reward = Math.abs(realTarget - entryPrice);
-      actualRR = Number((reward / riskAmount).toFixed(2));
+      if (realTarget !== null) {
+        rewardAmount = (realTarget - entryPrice) * dir;
+        if (riskAmount > 0 && rewardAmount > 0) {
+          actualRR = Number((rewardAmount / riskAmount).toFixed(2));
+        }
+      }
     }
   }
 
   // --- Step 5: Entry ---
   let step5Status: ChecklistItemResult['status'] = 'pass';
-  let step5Inference = '';
-  if (entryPrice !== null) {
-    if (actualRR === null) {
-      step5Status = 'unknown';
-      step5Inference = `Entry=${entryPrice.toFixed(config.decimals)} (กรุณาระบุเป้าจริงเพื่อคำนวณ R:R)`;
-    } else if (actualRR < 3.0) {
-      step5Status = 'fail';
-      step5Inference = `ไม่เข้าเกณฑ์ (R:R จริง=${actualRR} < 3)`;
-    } else {
-      step5Status = 'pass';
-      step5Inference = `เข้าเกณฑ์ (R:R จริง=${actualRR} >= 3)`;
-    }
-  } else {
-    step5Status = 'fail';
-    step5Inference = 'ยังไม่มีจุดเข้า';
+  const step5Inferences: string[] = [];
+
+  const hasEventWarning = config.isEventFirstCandle;
+  const hasBufferWarning = config.buffer === 0;
+
+  if (hasEventWarning) {
+    step5Inferences.push('แท่งแรก CPI/NFP/Fed อาจ fake / spread กว้าง');
   }
+  if (hasBufferWarning) {
+    step5Inferences.push('ยังไม่ใส่ spread/slippage');
+  }
+
+  if (isWaitingBreakoutCandle) {
+    step5Status = 'unknown';
+    step5Inferences.unshift('รอแท่ง breakout');
+  } else if (entryPrice === null) {
+    step5Status = 'fail';
+    step5Inferences.unshift('ยังไม่มีจุดเข้า');
+  } else {
+    // Error checks (❌ ชนะ ⚠️)
+    if (riskAmount !== null && riskAmount <= 0) {
+      step5Status = 'fail';
+      step5Inferences.unshift('Stop อยู่ผิดฝั่ง entry');
+    } else if (realTarget !== null && rewardAmount !== null && rewardAmount <= 0) {
+      step5Status = 'fail';
+      step5Inferences.unshift('เป้าอยู่ผิดฝั่ง entry');
+    } else if (actualRR !== null && actualRR < 3.0) {
+      step5Status = 'fail';
+      step5Inferences.unshift(`ไม่เข้าเกณฑ์ (R:R ${actualRR} < 3)`);
+    } else if (actualRR !== null && actualRR >= 3.0) {
+      step5Inferences.unshift(`เข้าเกณฑ์ (R:R จริง=${actualRR} >= 3)`);
+      if (hasEventWarning || hasBufferWarning) {
+        step5Status = 'warn';
+      } else {
+        step5Status = 'pass';
+      }
+    } else {
+      step5Inferences.unshift(`Entry=${entryPrice.toFixed(config.decimals)} (กรุณาระบุเป้าจริงเพื่อคำนวณ R:R)`);
+      step5Status = (hasEventWarning || hasBufferWarning) ? 'warn' : 'unknown';
+    }
+  }
+
+  const step5Fact = `โหมด=${config.entryMode === 'immediate' ? 'ทะลุทันที' : 'Retest'} · จุดเข้า=${entryPrice !== null ? entryPrice.toFixed(config.decimals) : '-'} · Buffer=${config.buffer} · ราคาบนชาร์ตคือ bid ราคาเข้าจริงอาจแย่กว่าเส้น`;
+
   items.push({
     step: 5,
     title: 'Entry',
-    fact: `โหมด=${config.entryMode === 'immediate' ? 'ทะลุทันที' : 'Retest'} · จุดเข้า=${entryPrice ? entryPrice.toFixed(config.decimals) : '-'} · Buffer=${config.buffer}`,
-    inference: step5Inference,
+    fact: step5Fact,
+    inference: step5Inferences.join(' · '),
     status: step5Status,
   });
 
   // --- Step 6: Stop ---
   let step6Status: ChecklistItemResult['status'] = 'pass';
   let step6Inference = '';
-  if (stopPrice !== null && entryPrice !== null && riskAmount !== null) {
-    step6Status = 'pass';
-    step6Inference = `Stop ที่ ${stopPrice.toFixed(config.decimals)} (ระยะ Risk=${riskAmount.toFixed(config.decimals)})`;
+  let step6Fact = '';
+
+  if (isWaitingBreakoutCandle) {
+    step6Status = 'unknown';
+    step6Inference = 'รอแท่ง breakout';
+    step6Fact = `โหมด=สุดแท่ง Breakout · ยังไม่พบแท่ง Breakout Trigger`;
+  } else if (stopPrice !== null && entryPrice !== null && riskAmount !== null) {
+    if (riskAmount <= 0) {
+      step6Status = 'fail';
+      step6Inference = 'Stop อยู่ผิดฝั่ง entry';
+    } else {
+      step6Status = 'pass';
+      step6Inference = `Stop ที่ ${stopPrice.toFixed(config.decimals)} (ระยะ Risk=${riskAmount.toFixed(config.decimals)})`;
+    }
+    step6Fact = `โหมด=${config.stopMode === 'beyond_line' ? 'ใต้/เหนือเส้น' : 'ใต้/เหนือแท่ง breakout'} · ราคา Stop=${stopPrice.toFixed(config.decimals)} · ระยะ Risk=${riskAmount.toFixed(config.decimals)}`;
   } else {
     step6Status = 'fail';
     step6Inference = 'ยังไม่สามารถคำนวณ Stop Loss';
+    step6Fact = `โหมด=${config.stopMode === 'beyond_line' ? 'ใต้/เหนือเส้น' : 'ใต้/เหนือแท่ง breakout'} · ราคา Stop=-`;
   }
+
   items.push({
     step: 6,
     title: 'Stop',
-    fact: `โหมด=${config.stopMode === 'beyond_line' ? 'ใต้/เหนือเส้น' : 'ใต้/เหนือแท่ง breakout'} · ราคา Stop=${stopPrice ? stopPrice.toFixed(config.decimals) : '-'}`,
+    fact: step6Fact,
     inference: step6Inference,
     status: step6Status,
   });
@@ -654,7 +833,7 @@ export function evaluateBreakoutScalp(
     const nowSec = Math.floor(Date.now() / 1000);
     const elapsedSec = nowSec - (triggerTimeSec + ltfSec);
     const isOver5Min = elapsedSec > 300;
-    const risk = riskAmount || 1;
+    const risk = riskAmount && riskAmount > 0 ? riskAmount : 1;
     const reached1R = maxGain >= 1.0 * risk;
 
     step7Fact = `แท่งหลัง Trigger=${postTriggerCandles.length} แท่ง · ผ่านไป=${Math.floor(elapsedSec / 60)} นาที · MaxGain=${maxGain.toFixed(config.decimals)} (1R=${risk.toFixed(config.decimals)})`;
@@ -679,16 +858,47 @@ export function evaluateBreakoutScalp(
   });
 
   // --- Step 8: R/R ---
+  let step8Status: ChecklistItemResult['status'] = 'unknown';
+  let step8Inference = '';
+  let step8Fact = '';
+
+  if (isWaitingBreakoutCandle) {
+    step8Status = 'unknown';
+    step8Inference = 'รอแท่ง breakout';
+    step8Fact = 'รอแท่ง breakout เพื่อคำนวณ Risk และ R:R';
+  } else if (riskAmount !== null && riskAmount <= 0) {
+    step8Status = 'fail';
+    step8Inference = 'Stop อยู่ผิดฝั่ง entry';
+    step8Fact = `Risk=${riskAmount.toFixed(config.decimals)} (Stop อยู่ผิดฝั่ง) · เป้าจริง=${realTarget !== null ? realTarget.toFixed(config.decimals) : '-'}`;
+  } else if (realTarget === null) {
+    step8Status = 'unknown';
+    step8Inference = 'กรุณาระบุเป้าหมายจริงเพื่อคำนวณอัตราผลตอบแทนต่อความเสี่ยง';
+    step8Fact = `Risk=${riskAmount !== null ? riskAmount.toFixed(config.decimals) : '-'} · ราคาที่ 3R=${target3R !== null ? target3R.toFixed(config.decimals) : '-'} · ยังไม่ระบุเป้าจริง`;
+  } else if (rewardAmount !== null && rewardAmount <= 0) {
+    step8Status = 'fail';
+    step8Inference = 'เป้าอยู่ผิดฝั่ง entry';
+    step8Fact = `Risk=${riskAmount !== null ? riskAmount.toFixed(config.decimals) : '-'} · Reward=${rewardAmount.toFixed(config.decimals)} (เป้าอยู่ผิดฝั่ง entry)`;
+  } else if (actualRR !== null) {
+    if (actualRR < 3.0) {
+      step8Status = 'fail';
+      step8Inference = `ไม่เข้าเกณฑ์ (R:R ${actualRR} < 3)`;
+    } else {
+      step8Status = 'pass';
+      step8Inference = `เข้าเกณฑ์ (R:R ${actualRR} >= 3)`;
+    }
+    step8Fact = `Risk=${riskAmount?.toFixed(config.decimals)} · ราคาที่ 3R=${target3R?.toFixed(config.decimals)} · Reward=${rewardAmount?.toFixed(config.decimals)} · R:R เป้าจริง=1 : ${actualRR}`;
+  } else {
+    step8Status = 'fail';
+    step8Inference = 'ไม่สามารถคำนวณ R:R ได้';
+    step8Fact = '-';
+  }
+
   items.push({
     step: 8,
     title: 'R/R & เป้าหมาย',
-    fact: `Risk=${riskAmount ? riskAmount.toFixed(config.decimals) : '-'} · ราคาที่ 3R=${target3R ? target3R.toFixed(config.decimals) : '-'} · R:R เป้าจริง=${actualRR !== null ? `1 : ${actualRR}` : 'ยังไม่ระบุเป้าจริง'}`,
-    inference: actualRR !== null
-      ? actualRR >= 3.0
-        ? 'R:R คุ้มค่าต่อความเสี่ยง (>= 3R)'
-        : 'R:R ไม่คุ้มค่าความเสี่ยง (< 3R)'
-      : 'กรุณาระบุเป้าหมายจริงเพื่อคำนวณอัตราผลตอบแทนต่อความเสี่ยง',
-    status: actualRR !== null ? (actualRR >= 3.0 ? 'pass' : 'fail') : 'unknown',
+    fact: step8Fact,
+    inference: step8Inference,
+    status: step8Status,
   });
 
   return {
