@@ -23,9 +23,13 @@ import { AlertModal } from './components/AlertModal';
 import { AlertDrawer } from './components/AlertDrawer';
 import { AlertNotificationToast } from './components/AlertNotificationToast';
 import { RiskCalculator } from './components/RiskCalculator';
-import { UploadCloud, FileSpreadsheet, Trash2, CheckCircle, AlertCircle } from 'lucide-react';
+import { MarketAnalysisView } from './components/MarketAnalysisView';
+import { BreakoutScalpView } from './components/BreakoutScalpView';
+import { SCALP_ASSETS, loadScalpConfigs, filterClosedCandles } from './services/breakoutScalp';
+import { UploadCloud, FileSpreadsheet, Trash2, CheckCircle, AlertCircle, Sparkles, X } from 'lucide-react';
 
 const ALERTS_STORAGE_KEY = 'apextrade_alerts_v2';
+const APP_MODE_STORAGE_KEY = 'apextrade_app_mode';
 
 function formatCandleDate(timestampSec: number): string {
   const d = new Date(timestampSec * 1000);
@@ -38,7 +42,7 @@ function formatCandleDate(timestampSec: number): string {
 }
 
 export default function App() {
-  const [activeView, setActiveView] = useState<'trade' | 'alerts' | 'calculator'>('trade');
+  const [activeView, setActiveView] = useState<'trade' | 'alerts' | 'calculator' | 'analysis'>('trade');
 
   // Master asset list without any hardcoded/simulated prices
   const [assets, setAssets] = useState<Asset[]>(() => {
@@ -87,6 +91,107 @@ export default function App() {
   const [isAlertModalOpen, setIsAlertModalOpen] = useState<boolean>(false);
   const [prefilledAlertPrice, setPrefilledAlertPrice] = useState<number | null>(null);
   const [isAlertDrawerOpen, setIsAlertDrawerOpen] = useState<boolean>(false);
+
+  // Mode selection state (Mode 1: original, Mode 2: Breakout Scalp)
+  const [appMode, setAppMode] = useState<'mode1' | 'mode2'>(() => {
+    try {
+      const saved = localStorage.getItem(APP_MODE_STORAGE_KEY);
+      if (saved === 'mode2') return 'mode2';
+    } catch {}
+    return 'mode1';
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(APP_MODE_STORAGE_KEY, appMode);
+    } catch {}
+  }, [appMode]);
+
+  // Breakout Scalp background alert state
+  const [scalpToast, setScalpToast] = useState<{ symbol: string; message: string; time: number } | null>(null);
+  const lastAlertedScalpCandlesRef = useRef<Record<string, number>>({});
+
+  // Background monitor: Check Breakout Scalp alerts across all enabled assets (works in both Mode 1 & 2)
+  useEffect(() => {
+    const checkScalpAlerts = async () => {
+      const configs = loadScalpConfigs();
+      for (const assetMeta of SCALP_ASSETS) {
+        const conf = configs[assetMeta.symbol];
+        if (!conf || !conf.alertEnabled) continue;
+        if (conf.levelHigh === null && conf.levelLow === null) continue;
+
+        try {
+          let klines: Candle[] = [];
+          if (assetMeta.source === 'Binance') {
+            klines = await fetchBinanceKlines(assetMeta.symbol, conf.timeframe as Timeframe);
+          } else {
+            const res = await fetch(`/api/klines?symbol=${encodeURIComponent(assetMeta.symbol)}&timeframe=${conf.timeframe}`);
+            const data = await res.json();
+            klines = data.candles || [];
+          }
+
+          const tfSec = conf.timeframe === '1m' ? 60 : 300;
+          const closed = filterClosedCandles(klines, tfSec);
+          if (closed.length < 26) continue;
+
+          const latestClosed = closed[closed.length - 1];
+          // Alert only once per candle
+          if (lastAlertedScalpCandlesRef.current[assetMeta.symbol] === latestClosed.time) {
+            continue;
+          }
+
+          const prior20 = closed.slice(-21, -1);
+          const avgVol20 = prior20.reduce((s, c) => s + (c.volume || 0), 0) / 20;
+          const volRatio = avgVol20 > 0 ? (latestClosed.volume || 0) / avgVol20 : 0;
+          if (volRatio < 2.0) continue;
+
+          const prior5 = closed.slice(-6, -1);
+          const maxHigh5 = Math.max(...prior5.map(c => c.high));
+          const minLow5 = Math.min(...prior5.map(c => c.low));
+
+          let triggeredSide: 'bull' | 'bear' | null = null;
+          if (conf.levelHigh !== null && latestClosed.close > conf.levelHigh && latestClosed.close > maxHigh5) {
+            triggeredSide = 'bull';
+          } else if (conf.levelLow !== null && latestClosed.close < conf.levelLow && latestClosed.close < minLow5) {
+            triggeredSide = 'bear';
+          }
+
+          if (triggeredSide) {
+            lastAlertedScalpCandlesRef.current[assetMeta.symbol] = latestClosed.time;
+            const timeHHMM = new Date(latestClosed.time * 1000).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+            const dir = triggeredSide === 'bull' ? 'เหนือ' : 'ใต้';
+            const lvl = triggeredSide === 'bull' ? conf.levelHigh : conf.levelLow;
+            const msg = `[FACT] แท่ง ${timeHHMM} ปิด ${latestClosed.close.toFixed(conf.decimals)} ${dir}เส้น ${lvl?.toFixed(conf.decimals)} · vol ${volRatio.toFixed(1)}× เฉลี่ย 20 → [INFERENCE] เข้าเงื่อนไข trigger (ข้อ 4)`;
+
+            if (soundService.enabled) {
+              soundService.playPriceAlertSound();
+            }
+
+            if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+              try {
+                new Notification(`⚡ Breakout Scalp Trigger: ${assetMeta.symbol}`, {
+                  body: msg,
+                  icon: '/favicon.ico',
+                });
+              } catch {}
+            }
+
+            setScalpToast({
+              symbol: assetMeta.symbol,
+              message: msg,
+              time: Date.now(),
+            });
+          }
+        } catch {
+          // ignore transient poll failure
+        }
+      }
+    };
+
+    const interval = setInterval(checkScalpAlerts, 15000);
+    checkScalpAlerts(); // initial run
+    return () => clearInterval(interval);
+  }, []);
 
   const currentAsset = assets.find(a => a.symbol === selectedSymbol) || assets[0];
   const isBinanceAsset = selectedSymbol === 'BTC/USDT' || selectedSymbol === 'ETH/USDT';
@@ -552,9 +657,15 @@ export default function App() {
       {/* 3-Zone Top Bar */}
       <TopNav
         activeView={activeView}
-        setActiveView={setActiveView}
+        setActiveView={(v) => {
+          setActiveView(v);
+          setAppMode('mode1');
+        }}
         activeAlertCount={activeAlertCount}
-        onOpenAlertDrawer={() => setIsAlertDrawerOpen(true)}
+        onOpenAlertDrawer={() => {
+          setAppMode('mode1');
+          setIsAlertDrawerOpen(true);
+        }}
         soundEnabled={soundEnabled}
         onToggleSound={() => {
           const next = !soundEnabled;
@@ -562,13 +673,44 @@ export default function App() {
           soundService.enabled = next;
         }}
         onOpenCreateAlert={() => {
+          setAppMode('mode1');
           setPrefilledAlertPrice(null);
           setIsAlertModalOpen(true);
         }}
       />
 
+      {/* Mode Switcher Buttons - Full Width below TopNav */}
+      <div className="w-full bg-slate-950/95 border-b border-slate-800 px-3 lg:px-6 py-2.5 sticky top-[57px] z-30 backdrop-blur-md">
+        <div className="max-w-[1720px] w-full mx-auto grid grid-cols-2 gap-3">
+          <button
+            onClick={() => setAppMode('mode1')}
+            className={`py-2 px-4 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${
+              appMode === 'mode1'
+                ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
+                : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
+            }`}
+          >
+            <span>แบบที่ 1 · เดิม</span>
+          </button>
+          <button
+            onClick={() => setAppMode('mode2')}
+            className={`py-2 px-4 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${
+              appMode === 'mode2'
+                ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
+                : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
+            }`}
+          >
+            <span>แบบที่ 2 · Breakout Scalp</span>
+          </button>
+        </div>
+      </div>
+
       {/* Main Content Area */}
       <main className="flex-1 max-w-[1720px] w-full mx-auto p-3 lg:p-4 space-y-3">
+        {appMode === 'mode2' ? (
+          <BreakoutScalpView />
+        ) : (
+          <>
         {/* Asset Selector Strip */}
         <AssetSelector
           assets={assets}
@@ -583,6 +725,12 @@ export default function App() {
 
         {activeView === 'calculator' ? (
           <RiskCalculator assets={assets} currentAsset={currentAsset} />
+        ) : activeView === 'analysis' ? (
+          <MarketAnalysisView
+            assets={assets}
+            selectedSymbol={selectedSymbol}
+            onSelectSymbol={setSelectedSymbol}
+          />
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 min-h-[580px]">
             {/* Interactive Trading Chart (9 Cols on desktop) */}
@@ -849,6 +997,8 @@ export default function App() {
             </div>
           </div>
         )}
+          </>
+        )}
       </main>
 
       {/* Price Alert Creation Modal */}
@@ -889,6 +1039,38 @@ export default function App() {
           setActiveAlertToast(null);
         }}
       />
+
+      {/* Floating Breakout Scalp Trigger Toast */}
+      {scalpToast && (
+        <div className="fixed top-5 right-5 z-50 max-w-md w-full bg-slate-900 border-2 border-emerald-500 rounded-2xl shadow-2xl shadow-emerald-500/20 overflow-hidden p-4 animate-in slide-in-from-top-4 duration-300">
+          <div className="flex items-start justify-between gap-2 border-b border-slate-800 pb-2">
+            <div className="flex items-center gap-2 text-emerald-400 font-bold text-xs">
+              <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
+              <span>⚡ แจ้งเตือน Breakout Scalp ({scalpToast.symbol})</span>
+            </div>
+            <button
+              onClick={() => setScalpToast(null)}
+              className="text-slate-400 hover:text-white rounded p-1 hover:bg-slate-800 cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+          <p className="mt-2 text-slate-200 font-mono text-[11px] leading-relaxed bg-slate-950 p-2.5 rounded-lg border border-slate-800/80">
+            {scalpToast.message}
+          </p>
+          <div className="mt-3 flex items-center justify-end gap-2 text-xs">
+            <button
+              onClick={() => {
+                setAppMode('mode2');
+                setScalpToast(null);
+              }}
+              className="px-3.5 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold rounded-xl shadow-md transition-all cursor-pointer"
+            >
+              เปิดโหมด Breakout Scalp
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

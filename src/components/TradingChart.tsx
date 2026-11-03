@@ -95,10 +95,14 @@ export const TradingChart: React.FC<TradingChartProps> = ({
   const [panOffset, setPanOffset] = useState<number>(0);
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [dragStartX, setDragStartX] = useState<number>(0);
+  const [dragStartY, setDragStartY] = useState<number>(0);
   const [dragStartPan, setDragStartPan] = useState<number>(0);
+  const [dragStartPricePan, setDragStartPricePan] = useState<number>(0);
   const hasDraggedRef = useRef<boolean>(false);
   const touchStartXRef = useRef<number>(0);
+  const touchStartYRef = useRef<number>(0);
   const touchStartPanRef = useRef<number>(0);
+  const touchStartPricePanRef = useRef<number>(0);
 
   // Y-axis vertical stretch & scaling state (TradingView style)
   const [priceScaleMultiplier, setPriceScaleMultiplier] = useState<number>(1.0);
@@ -1299,10 +1303,11 @@ export const TradingChart: React.FC<TradingChartProps> = ({
     const mouseX = (e.clientX - rect.left) * dpr;
     const mouseY = (e.clientY - rect.top) * dpr;
 
-    // Handle Pan Dragging
+    // Handle Pan Dragging (Free 2D Pan: Horizontal Time & Vertical Price)
     if (isDragging) {
       const deltaX = e.clientX - dragStartX;
-      if (Math.abs(deltaX) > 2) {
+      const deltaY = e.clientY - dragStartY;
+      if (Math.abs(deltaX) > 2 || Math.abs(deltaY) > 2) {
         hasDraggedRef.current = true;
       }
       const rightPadding = 75;
@@ -1313,6 +1318,12 @@ export const TradingChart: React.FC<TradingChartProps> = ({
       const minPan = -Math.floor(visibleCount * 0.85);
       const newOffset = Math.max(minPan, Math.min(maxPan, dragStartPan + candleDelta));
       setPanOffset(newOffset);
+
+      // Vertical price pan (shifts chart up and down freely)
+      const chartHeight = Math.max(100, rect.height - 25);
+      const { paddedRange } = getPriceRange(visibleCandles);
+      const priceDelta = (deltaY / chartHeight) * paddedRange;
+      setPricePanOffset(dragStartPricePan + priceDelta);
       return;
     }
 
@@ -1421,7 +1432,9 @@ export const TradingChart: React.FC<TradingChartProps> = ({
     if (isDrawingSr || isDrawingTrendline) return; // In drawing mode
     setIsDragging(true);
     setDragStartX(e.clientX);
+    setDragStartY(e.clientY);
     setDragStartPan(panOffset);
+    setDragStartPricePan(pricePanOffset);
     hasDraggedRef.current = false;
   };
 
@@ -1432,27 +1445,16 @@ export const TradingChart: React.FC<TradingChartProps> = ({
   };
 
   const handleMouseLeave = () => {
-    setIsDragging(false);
-    setIsDraggingYAxis(false);
-    isDraggingYAxisRef.current = false;
-    setIsHoveringYAxis(false);
-    setCrosshair(null);
+    if (!isDragging && !isDraggingYAxisRef.current) {
+      setIsHoveringYAxis(false);
+      setCrosshair(null);
+    }
   };
 
-  const handleDoubleClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    const canvas = mainCanvasRef.current;
-    if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    const dpr = window.devicePixelRatio || 1;
-    const mouseX = (e.clientX - rect.left) * dpr;
-    const rightPadding = 75 * dpr;
-    const chartWidth = canvas.width - rightPadding;
-
-    if (mouseX >= chartWidth) {
-      // Double click on price axis: Reset Y scale back to Auto-fit
-      setPriceScaleMultiplier(1.0);
-      setPricePanOffset(0);
-    }
+  const handleDoubleClick = () => {
+    // Double click anywhere on chart or price scale: Reset Y scale & pan offset back to Auto-fit
+    setPriceScaleMultiplier(1.0);
+    setPricePanOffset(0);
   };
 
   // Touch support for smooth mobile dragging & Y-axis scaling
@@ -1473,7 +1475,9 @@ export const TradingChart: React.FC<TradingChartProps> = ({
       }
       if (!isDrawingSr && !isDrawingTrendline) {
         touchStartXRef.current = touch.clientX;
+        touchStartYRef.current = touch.clientY;
         touchStartPanRef.current = panOffset;
+        touchStartPricePanRef.current = pricePanOffset;
         setIsDragging(true);
         hasDraggedRef.current = false;
       }
@@ -1489,7 +1493,8 @@ export const TradingChart: React.FC<TradingChartProps> = ({
     }
     if (e.touches.length === 1 && isDragging) {
       const deltaX = e.touches[0].clientX - touchStartXRef.current;
-      if (Math.abs(deltaX) > 2) {
+      const deltaY = e.touches[0].clientY - touchStartYRef.current;
+      if (Math.abs(deltaX) > 2 || Math.abs(deltaY) > 2) {
         hasDraggedRef.current = true;
       }
       const canvas = mainCanvasRef.current;
@@ -1503,6 +1508,12 @@ export const TradingChart: React.FC<TradingChartProps> = ({
       const minPan = -Math.floor(visibleCount * 0.85);
       const newOffset = Math.max(minPan, Math.min(maxPan, touchStartPanRef.current + candleDelta));
       setPanOffset(newOffset);
+
+      // Free vertical drag on touch
+      const chartHeight = Math.max(100, rect.height - 25);
+      const { paddedRange } = getPriceRange(visibleCandles);
+      const priceDelta = (deltaY / chartHeight) * paddedRange;
+      setPricePanOffset(touchStartPricePanRef.current + priceDelta);
     }
   };
 
@@ -1512,7 +1523,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
     isDraggingYAxisRef.current = false;
   };
 
-  // Wheel zoom (over price axis: vertical Y-zoom, over chart: horizontal bar zoom)
+  // Wheel zoom (over price axis or with Ctrl: vertical Y-zoom, with Alt: vertical pan, over chart: horizontal bar zoom)
   const handleWheel = (e: React.WheelEvent) => {
     e.preventDefault();
     const canvas = mainCanvasRef.current;
@@ -1524,6 +1535,17 @@ export const TradingChart: React.FC<TradingChartProps> = ({
         setPriceScaleMultiplier(prev => Math.max(0.15, Math.min(40, prev * factor)));
         return;
       }
+    }
+    if (e.ctrlKey) {
+      const factor = e.deltaY < 0 ? 1.15 : 0.85;
+      setPriceScaleMultiplier(prev => Math.max(0.15, Math.min(40, prev * factor)));
+      return;
+    }
+    if (e.altKey) {
+      const { paddedRange } = getPriceRange(visibleCandles);
+      const priceDelta = (e.deltaY < 0 ? -0.05 : 0.05) * paddedRange;
+      setPricePanOffset(prev => prev + priceDelta);
+      return;
     }
     if (e.deltaY < 0) {
       handleZoom(-5);
@@ -2045,7 +2067,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
 
         {/* Tip for pan and zoom */}
         <div className="hidden lg:block ml-auto text-[10px] text-slate-400 font-sans">
-          💡 ลากเมาส์ที่แถบราคาด้านขวาเพื่อยืด/หดแกน Y (ดับเบิ้ลคลิกเพื่อรีเซ็ต) | ลากกราฟเพื่อเลื่อน
+          💡 ลากกราฟเพื่อเลื่อนอิสระ (ขึ้น-ลง และซ้าย-ขวา) | ลากแถบราคาด้านขวาเพื่อยืด/หดแกน Y | ดับเบิ้ลคลิกเพื่อรีเซ็ต Auto
         </div>
       </div>
 
