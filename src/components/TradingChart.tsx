@@ -90,6 +90,13 @@ export const TradingChart: React.FC<TradingChartProps> = ({
   const [isDrawingSr, setIsDrawingSr] = useState<boolean>(false);
   const [showSrPanel, setShowSrPanel] = useState<boolean>(false);
 
+  // Clear S/R line automatically when switching symbol (keep across timeframe changes)
+  useEffect(() => {
+    setSrLevel(null);
+    setShowSrPanel(false);
+    setIsDrawingSr(false);
+  }, [symbol]);
+
   // Viewport zoom & pan offset
   const [visibleCount, setVisibleCount] = useState<number>(60);
   const [panOffset, setPanOffset] = useState<number>(0);
@@ -160,9 +167,15 @@ export const TradingChart: React.FC<TradingChartProps> = ({
     }
   }, [trendlineRedoStack]);
 
-  // Global Keyboard shortcuts: Ctrl+Z (Undo) and Ctrl+Y / Ctrl+Shift+Z (Redo)
+  // Global Keyboard shortcuts: Ctrl+Z (Undo), Ctrl+Y / Ctrl+Shift+Z (Redo), Esc (cancel S/R mode)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isDrawingSr) {
+        e.preventDefault();
+        setIsDrawingSr(false);
+        return;
+      }
+
       const target = e.target as HTMLElement;
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
         return;
@@ -187,7 +200,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleUndo, handleRedo]);
+  }, [handleUndo, handleRedo, isDrawingSr]);
 
   // Global mouse handlers for pan and smooth Y-axis scale dragging
   useEffect(() => {
@@ -1960,7 +1973,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
                 setSelectedTrendlineId(null);
               }}
               className="p-1 text-slate-400 hover:text-rose-400 hover:bg-rose-950/30 rounded border border-slate-800 hover:border-rose-900 transition-colors cursor-pointer"
-              title="ลบเส้น Trendline ทั้งหมด"
+              title="ลบ Trendline ทั้งหมด (ไม่รวม S/R)"
             >
               <Trash2 className="w-3.5 h-3.5" />
             </button>
@@ -1982,6 +1995,21 @@ export const TradingChart: React.FC<TradingChartProps> = ({
             <Compass className="w-3.5 h-3.5 text-amber-400" />
             <span>แนวรับ/ต้าน</span>
           </button>
+
+          {srLevel !== null && (
+            <button
+              onClick={() => {
+                setSrLevel(null);
+                setShowSrPanel(false);
+                setIsDrawingSr(false);
+              }}
+              className="flex items-center gap-1 px-2 py-1 text-[11px] font-semibold rounded-lg border border-rose-900/70 bg-rose-950/30 text-rose-400 hover:text-rose-300 hover:bg-rose-950/60 transition-colors cursor-pointer"
+              title="ลบเส้น S/R"
+            >
+              <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+              <span>ลบเส้น S/R</span>
+            </button>
+          )}
 
           {/* Undo / Redo */}
           <div className="flex items-center gap-0.5 border-l border-slate-800 pl-1.5 ml-0.5">
@@ -2211,6 +2239,16 @@ export const TradingChart: React.FC<TradingChartProps> = ({
                 className="text-[11px] text-cyan-400 hover:underline cursor-pointer"
               >
                 ย้ายตำแหน่งเส้น
+              </button>
+              <button
+                onClick={() => {
+                  setSrLevel(null);
+                  setShowSrPanel(false);
+                  setIsDrawingSr(false);
+                }}
+                className="text-[11px] text-rose-400 hover:text-rose-300 hover:underline cursor-pointer"
+              >
+                ลบเส้น
               </button>
               <button
                 onClick={() => setShowSrPanel(false)}

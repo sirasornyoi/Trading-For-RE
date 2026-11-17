@@ -20,6 +20,7 @@
 - [done] Added missing: boolean field in EvidenceItem and exempted items containing "ไม่พบข้อมูล" from url/date filtering
 - [done] Rendered missing mandatory topics in top gray box ("หัวข้อบังคับที่ยังหาไม่เจอ") outside BULL/BEAR columns and thesis boxes
 - [done] Added 'unclear' fallback to thesis_relation and added third box "ยังไม่ชัดว่าหนุนหรือขัด"
+- [done] Updated `TradingChart.tsx` S/R controls: added toolbar "ลบเส้น S/R" button, panel "ลบเส้น" button, Trendline tooltip clarification, auto-clear S/R on symbol switch (preserved on timeframe switch), and `Esc` to exit S/R drawing mode
 
 ## Mode 2 · Breakout Scalp (แบบที่ 2) Refinements
 - [done] Added directional extreme detection (extremeUp vs extremeDown) and signed EMA50 H4 distance in Step 0
