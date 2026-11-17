@@ -65,7 +65,7 @@ export const TIER_CHECKLISTS: Record<ActiveTierId, TierChecklistDef[]> = {
     },
     {
       id: 't1_probe_near_low',
-      label: '[ไม้ทดลองที่ low] ราคาที่/ใกล้ Low + RSI Daily ใกล้/ต่ำกว่า 30',
+      label: '[ไม้ทดลองที่ low] ราคาที่/ใกล้ Low + RSI Daily ใกล้ 30 (ดุลพินิจ)',
       detail: 'เข้าไม้เล็กสุดเมื่อราคาทดสอบ Low และ RSI Daily อยู่โซนโอกาส Rebound',
       onlyWhenLowProbe: true,
     },
@@ -206,21 +206,21 @@ export function evaluateDailyRsi(d1Candles: Candle[]): DailyRsiEvaluation {
     };
   }
   const rsi = Number(rsiArr[rsiArr.length - 1].toFixed(1));
-  if (rsi <= 35) {
+  if (rsi <= 30) {
     return {
       available: true,
       rsi,
       zone: 'rebound_zone',
-      zoneLabel: rsi <= 30 ? 'ต่ำกว่า/เท่ากับ 30 — โซนโอกาส Rebound' : 'ใกล้ 30 — โซนโอกาส Rebound',
+      zoneLabel: 'ต่ำกว่า/เท่ากับ 30 — โซนโอกาส Rebound',
       rangeNote: 'ช่วงปกติ 30–70',
     };
   }
-  if (rsi >= 65) {
+  if (rsi >= 70) {
     return {
       available: true,
       rsi,
       zone: 'resistance_zone',
-      zoneLabel: rsi >= 70 ? 'เกิน/เท่ากับ 70 — โซนติดแนวต้าน' : 'ใกล้ 70 — โซนติดแนวต้าน',
+      zoneLabel: 'เกิน/เท่ากับ 70 — โซนติดแนวต้าน',
       rangeNote: 'ช่วงปกติ 30–70',
     };
   }

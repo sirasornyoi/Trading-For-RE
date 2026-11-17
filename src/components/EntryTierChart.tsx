@@ -529,7 +529,7 @@ export const EntryTierChart: React.FC<EntryTierChartProps> = ({
       nextPaneIdx += 1;
     }
 
-    // Pane 2 (optional): RSI 14 + <=35 / >=65 shaded zones + dashed 30/70 lines
+    // Pane 2 (optional): RSI 14 + <=30 / >=70 shaded zones + dashed 30/70 lines
     let rsiHighZone: ISeriesApi<'Baseline'> | null = null;
     let rsiLowZone: ISeriesApi<'Baseline'> | null = null;
     let rsiSeries: ISeriesApi<'Line'> | null = null;
@@ -539,7 +539,7 @@ export const EntryTierChart: React.FC<EntryTierChartProps> = ({
       rsiHighZone = chart.addSeries(
         BaselineSeries,
         {
-          baseValue: { type: 'price', price: 65 },
+          baseValue: { type: 'price', price: 70 },
           topFillColor1: 'rgba(244, 63, 94, 0.16)',
           topFillColor2: 'rgba(244, 63, 94, 0.08)',
           bottomFillColor1: 'transparent',
@@ -558,7 +558,7 @@ export const EntryTierChart: React.FC<EntryTierChartProps> = ({
       rsiLowZone = chart.addSeries(
         BaselineSeries,
         {
-          baseValue: { type: 'price', price: 35 },
+          baseValue: { type: 'price', price: 30 },
           topFillColor1: 'transparent',
           topFillColor2: 'transparent',
           bottomFillColor1: 'rgba(16, 185, 129, 0.08)',

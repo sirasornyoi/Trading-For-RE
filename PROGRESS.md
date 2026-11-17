@@ -49,6 +49,7 @@
 - [done] Enhanced `EntryTierChart.tsx` with EMA20/50/100/200 (`calculateEMA`), Volume + MA20 with zero-volume notice, RSI 14 pane (`calculateRSI`) with 30/70 dashed lines, <=35/>=65 shading & Daily RSI header, 3-bar Swing High/Low markers, R/R shaded zones & distance labels, expanded legend, and separate localStorage indicator persistence
 - [done] Added per-field `✕` clear buttons next to Entry/SL/TP inputs in `EntryTiersPanel.tsx` and toolbar `"ลบเส้นทั้งหมด"` button in `EntryTierChart.tsx` (scoped strictly to the active tier)
 - [done] Fixed `EntryTierChart.tsx` EMA visibility & Swing markers after chart rebuild (`indicatorsRef` + `chartVersion`), preserved zoom/pan across 5m refreshes and Volume/RSI pane toggles (`getVisibleLogicalRange`/`setVisibleLogicalRange`), and added dashed light-green `TP1` line + `✕` clear button (included in `"ลบเส้นทั้งหมด"`)
+- [done] Updated Entry Tiers RSI zone thresholds from 35/65 to 30/70 in `evaluateDailyRsi` (`src/services/entryTiers.ts`) and RSI pane shading (`src/components/EntryTierChart.tsx`), removed near-30/70 labels, and updated low-probe checklist text to `ราคาที่/ใกล้ Low + RSI Daily ใกล้ 30 (ดุลพินิจ)`
 
 ## Known Issues
 - None
