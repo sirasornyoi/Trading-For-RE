@@ -519,6 +519,11 @@ export default function App() {
     }
   }, [selectedSymbol, timeframe, isKrakenAsset, isYahooAsset, checkPriceAlerts]);
 
+  const candlesRef = useRef<Candle[]>(candles);
+  useEffect(() => {
+    candlesRef.current = candles;
+  }, [candles]);
+
   // Live Kraken WebSocket v2 OHLC stream for BTC/USD, ETH/USD, and SOL/USD
   useEffect(() => {
     if (!isKrakenAsset || typeof window === 'undefined') {
@@ -528,14 +533,95 @@ export default function App() {
 
     const wsKey = `${selectedSymbol}|${timeframe}`;
     const wsSymbol = selectedSymbol;
+    let isDisposed = false;
+    let latestSnapshotCandle: Candle | null = null;
+    let snapshotFlushScheduled = false;
+
+    const updateAssetFromCandle = (candle: Candle) => {
+      const currentCandles = candlesRef.current;
+      if (currentCandles.length === 0) return;
+
+      const lastIdx = currentCandles.length - 1;
+      const lastCandle = currentCandles[lastIdx];
+      if (candle.time < lastCandle.time) return;
+
+      const isSameAsLast = lastCandle.time === candle.time;
+      let changePct = 0;
+      if (isSameAsLast) {
+        if (currentCandles.length > 1) {
+          const prevC = currentCandles[currentCandles.length - 2];
+          changePct = prevC.close > 0 ? ((candle.close - prevC.close) / prevC.close) * 100 : 0;
+        } else {
+          changePct = candle.open > 0 ? ((candle.close - candle.open) / candle.open) * 100 : 0;
+        }
+      } else {
+        changePct = lastCandle.close > 0 ? ((candle.close - lastCandle.close) / lastCandle.close) * 100 : 0;
+      }
+
+      const formattedDate = formatCandleDate(candle.time);
+      setAssets(prevAssets => prevAssets.map(a => {
+        if (a.symbol === wsSymbol) {
+          return {
+            ...a,
+            price: candle.close,
+            changeVsPrevCandle: Number(changePct.toFixed(2)),
+            lastCandleDate: formattedDate,
+            dataSource: 'Kraken',
+          };
+        }
+        return a;
+      }));
+    };
 
     const unsubscribe = subscribeKrakenOhlc(
       wsSymbol,
       timeframe,
-      (updatedCandle) => {
-        if (activeChartKeyRef.current !== wsKey) return;
+      (updatedCandle, isSnapshot) => {
+        if (isDisposed || activeChartKeyRef.current !== wsKey) return;
 
-        const formattedDate = formatCandleDate(updatedCandle.time);
+        if (isSnapshot) {
+          if (!latestSnapshotCandle || updatedCandle.time >= latestSnapshotCandle.time) {
+            latestSnapshotCandle = updatedCandle;
+          }
+
+          setCandles(prevCandles => {
+            if (prevCandles.length === 0) return prevCandles;
+
+            const lastIdx = prevCandles.length - 1;
+            const lastCandle = prevCandles[lastIdx];
+
+            if (updatedCandle.time === lastCandle.time) {
+              const copy = [...prevCandles];
+              copy[lastIdx] = updatedCandle;
+              return copy;
+            }
+            if (updatedCandle.time > lastCandle.time) {
+              return [...prevCandles, updatedCandle];
+            }
+
+            const matchIdx = prevCandles.findIndex(c => c.time === updatedCandle.time);
+            if (matchIdx !== -1) {
+              const copy = [...prevCandles];
+              copy[matchIdx] = updatedCandle;
+              return copy;
+            }
+            return prevCandles;
+          });
+
+          if (!snapshotFlushScheduled) {
+            snapshotFlushScheduled = true;
+            queueMicrotask(() => {
+              snapshotFlushScheduled = false;
+              const latest = latestSnapshotCandle;
+              latestSnapshotCandle = null;
+              if (isDisposed || activeChartKeyRef.current !== wsKey || !latest) return;
+              updateAssetFromCandle(latest);
+            });
+          }
+          return;
+        }
+
+        // message type === "update"
         checkPriceAlerts(wsSymbol, updatedCandle.close);
 
         setCandles(prevCandles => {
@@ -558,6 +644,7 @@ export default function App() {
               changePct = lastCandle.close > 0 ? ((updatedCandle.close - lastCandle.close) / lastCandle.close) * 100 : 0;
             }
 
+            const formattedDate = formatCandleDate(updatedCandle.time);
             setAssets(prevAssets => prevAssets.map(a => {
               if (a.symbol === wsSymbol) {
                 return {
@@ -579,7 +666,6 @@ export default function App() {
             return [...prevCandles, updatedCandle];
           }
 
-          // Update historical snapshot bar in-place if present
           const matchIdx = prevCandles.findIndex(c => c.time === updatedCandle.time);
           if (matchIdx !== -1) {
             const copy = [...prevCandles];
@@ -590,13 +676,14 @@ export default function App() {
         });
       },
       (connected) => {
-        if (activeChartKeyRef.current === wsKey) {
+        if (!isDisposed && activeChartKeyRef.current === wsKey) {
           setIsLiveWs(connected);
         }
       }
     );
 
     return () => {
+      isDisposed = true;
       unsubscribe();
     };
   }, [selectedSymbol, timeframe, isKrakenAsset, isYahooAsset, checkPriceAlerts]);

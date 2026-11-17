@@ -60,6 +60,8 @@
 - [done] Added `GET /api/kraken/ohlc` proxy in `server.ts` mapping `BTC/USD`→`XBTUSD`, `ETH/USD`→`ETHUSD`, `SOL/USD`→`SOLUSD` and returning `{ time, open, high, low, close, volume }` with Kraken error 502 handling
 - [done] Created `src/services/krakenData.ts` with `fetchKrakenKlines`, `subscribeKrakenOhlc` (`wss://ws.kraken.com/v2`), and one-time `migrateUsdtToUsdStorage` (`apextrade_migrated_usdt_to_usd_v1`)
 - [done] Switched crypto symbols (`BTC/USD`, `ETH/USD`, `SOL/USD`), defaults, data source labels (`Kraken`), and all Mode 1 + Mode 2 REST/WS/background monitors from Binance (`fetchBinanceKlines` removed) to Kraken
+- [done] Updated Kraken WS effect in `App.tsx` so `isSnapshot` only updates `candles` and flushes `setAssets` once with the latest candle, calling `checkPriceAlerts` only on `update` messages
+- [done] Added TTL caching (`1m/5m`: 5s, `15m/1h`: 15s, `4h/1d/1w`: 60s), in-flight promise deduplication, and `stale: true` rate-limit fallback in `server.ts` `/api/kraken/ohlc`
 
 ## Known Issues
 - None

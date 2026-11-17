@@ -331,88 +331,163 @@ function toKrakenPair(symbol: string): string {
   return clean;
 }
 
+interface KrakenOhlcPayload {
+  symbol: string;
+  pair: string;
+  interval: number;
+  source: string;
+  candles: {
+    time: number;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    volume: number;
+  }[];
+}
+
+interface KrakenCacheEntry {
+  data: KrakenOhlcPayload;
+  cachedAt: number;
+}
+
+const krakenOhlcCache = new Map<string, KrakenCacheEntry>();
+const krakenInFlight = new Map<string, Promise<{ payload: KrakenOhlcPayload; stale: boolean }>>();
+
+function getKrakenCacheTtlMs(timeframe: string): number {
+  if (timeframe === '1m' || timeframe === '5m') return 5_000;
+  if (timeframe === '15m' || timeframe === '1h') return 15_000;
+  return 60_000; // 4h, 1d, 1w
+}
+
+function isKrakenRateLimitMsg(msg: string): boolean {
+  const lower = msg.toLowerCase();
+  return lower.includes('too many requests') || lower.includes('rate limit');
+}
+
 // API endpoint for fetching crypto OHLC candles from Kraken public API
 app.get('/api/kraken/ohlc', async (req, res) => {
-  try {
-    const symbolParam = ((req.query.symbol as string) || 'BTC/USD').trim();
-    const timeframe = ((req.query.timeframe as string) || '1h').trim();
+  const symbolParam = ((req.query.symbol as string) || 'BTC/USD').trim();
+  const timeframe = ((req.query.timeframe as string) || '1h').trim();
 
-    const interval = KRAKEN_INTERVAL_MINUTES[timeframe];
-    if (!interval) {
-      return res.status(400).json({ error: `Unsupported timeframe: ${timeframe}` });
-    }
+  const interval = KRAKEN_INTERVAL_MINUTES[timeframe];
+  if (!interval) {
+    return res.status(400).json({ error: `Unsupported timeframe: ${timeframe}` });
+  }
 
+  const cacheKey = `${symbolParam}|${timeframe}`;
+  const ttlMs = getKrakenCacheTtlMs(timeframe);
+  const cached = krakenOhlcCache.get(cacheKey);
+
+  if (cached && Date.now() - cached.cachedAt < ttlMs) {
+    return res.json(cached.data);
+  }
+
+  let pending = krakenInFlight.get(cacheKey);
+  if (!pending) {
     const pair = toKrakenPair(symbolParam);
     const url = `https://api.kraken.com/0/public/OHLC?pair=${encodeURIComponent(pair)}&interval=${interval}`;
-    const response = await fetch(url, {
-      headers: {
-        'Accept': 'application/json',
-      },
-    });
 
-    if (!response.ok) {
-      return res.status(response.status).json({
-        error: `Kraken API error: ${response.statusText} (${response.status})`,
+    pending = (async () => {
+      const response = await fetch(url, {
+        headers: {
+          'Accept': 'application/json',
+        },
       });
-    }
 
-    const data = await response.json();
-    if (Array.isArray(data?.error) && data.error.length > 0) {
-      return res.status(502).json({ error: data.error.join(', ') });
-    }
-
-    const result = data?.result || {};
-    const pairKey = Object.keys(result).find(k => k !== 'last');
-    const rows: unknown[] = pairKey && Array.isArray(result[pairKey]) ? result[pairKey] : [];
-
-    const candles: {
-      time: number;
-      open: number;
-      high: number;
-      low: number;
-      close: number;
-      volume: number;
-    }[] = [];
-
-    for (const row of rows) {
-      if (!Array.isArray(row) || row.length < 7) continue;
-      const time = Number(row[0]);
-      const open = parseFloat(String(row[1]));
-      const high = parseFloat(String(row[2]));
-      const low = parseFloat(String(row[3]));
-      const close = parseFloat(String(row[4]));
-      const volume = parseFloat(String(row[6]));
-
-      if (
-        !isNaN(time) &&
-        !isNaN(open) &&
-        !isNaN(high) &&
-        !isNaN(low) &&
-        !isNaN(close)
-      ) {
-        candles.push({
-          time,
-          open,
-          high,
-          low,
-          close,
-          volume: isNaN(volume) ? 0 : volume,
-        });
+      if (!response.ok) {
+        let extra = '';
+        try {
+          extra = await response.text();
+        } catch {}
+        const errMsg = `Kraken API error: ${response.statusText} (${response.status})${extra ? ` - ${extra}` : ''}`;
+        const staleEntry = krakenOhlcCache.get(cacheKey);
+        if ((response.status === 429 || isKrakenRateLimitMsg(errMsg)) && staleEntry) {
+          return { payload: staleEntry.data, stale: true };
+        }
+        const err: any = new Error(errMsg);
+        err.status = response.status;
+        throw err;
       }
-    }
 
-    candles.sort((a, b) => a.time - b.time);
+      const data = await response.json();
+      if (Array.isArray(data?.error) && data.error.length > 0) {
+        const krakenErr = data.error.join(', ');
+        const staleEntry = krakenOhlcCache.get(cacheKey);
+        if (isKrakenRateLimitMsg(krakenErr) && staleEntry) {
+          return { payload: staleEntry.data, stale: true };
+        }
+        const err: any = new Error(krakenErr);
+        err.status = 502;
+        throw err;
+      }
 
-    return res.json({
-      symbol: symbolParam,
-      pair,
-      interval,
-      source: 'Kraken',
-      candles,
+      const result = data?.result || {};
+      const pairKey = Object.keys(result).find(k => k !== 'last');
+      const rows: unknown[] = pairKey && Array.isArray(result[pairKey]) ? result[pairKey] : [];
+
+      const candles: KrakenOhlcPayload['candles'] = [];
+
+      for (const row of rows) {
+        if (!Array.isArray(row) || row.length < 7) continue;
+        const time = Number(row[0]);
+        const open = parseFloat(String(row[1]));
+        const high = parseFloat(String(row[2]));
+        const low = parseFloat(String(row[3]));
+        const close = parseFloat(String(row[4]));
+        const volume = parseFloat(String(row[6]));
+
+        if (
+          !isNaN(time) &&
+          !isNaN(open) &&
+          !isNaN(high) &&
+          !isNaN(low) &&
+          !isNaN(close)
+        ) {
+          candles.push({
+            time,
+            open,
+            high,
+            low,
+            close,
+            volume: isNaN(volume) ? 0 : volume,
+          });
+        }
+      }
+
+      candles.sort((a, b) => a.time - b.time);
+
+      const payload: KrakenOhlcPayload = {
+        symbol: symbolParam,
+        pair,
+        interval,
+        source: 'Kraken',
+        candles,
+      };
+
+      krakenOhlcCache.set(cacheKey, { data: payload, cachedAt: Date.now() });
+      return { payload, stale: false };
+    })().finally(() => {
+      krakenInFlight.delete(cacheKey);
     });
+
+    krakenInFlight.set(cacheKey, pending);
+  }
+
+  try {
+    const { payload, stale } = await pending;
+    if (stale) {
+      return res.json({ ...payload, stale: true });
+    }
+    return res.json(payload);
   } catch (error: any) {
+    const staleEntry = krakenOhlcCache.get(cacheKey);
+    if (staleEntry && error?.message && isKrakenRateLimitMsg(String(error.message))) {
+      return res.json({ ...staleEntry.data, stale: true });
+    }
     console.error('Kraken OHLC proxy error:', error);
-    return res.status(500).json({ error: error.message || 'Internal server error' });
+    const status = typeof error?.status === 'number' ? error.status : 500;
+    return res.status(status).json({ error: error?.message || 'Internal server error' });
   }
 });
 
