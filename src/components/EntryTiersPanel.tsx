@@ -398,6 +398,8 @@ export const EntryTiersPanel: React.FC<EntryTiersPanelProps> = ({
             entryPrice={tierState.entryPrice}
             stopPrice={tierState.stopPrice}
             takeProfitPrice={tierState.takeProfitPrice}
+            rrEval={rrEval}
+            dailyRsi={dailyRsi}
             onPickPrice={handlePickPriceFromChart}
             isLoading={isCandlesLoading || (chartTf === '1w' && isWeeklyLoading)}
           />
