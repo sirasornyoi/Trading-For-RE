@@ -9,6 +9,15 @@ import {
   filterClosedCandles,
   aggregate1hTo4h,
 } from '../services/breakoutScalp';
+import {
+  EntryTierId,
+  ActiveTierId,
+  AssetTiersMap,
+  TierTradeState,
+  loadEntryTiersState,
+  saveEntryTiersState,
+} from '../services/entryTiers';
+import { EntryTiersPanel } from './EntryTiersPanel';
 import { Candle, Timeframe } from '../types/trading';
 import { fetchBinanceKlines } from '../services/marketData';
 import {
@@ -94,6 +103,10 @@ class BreakoutScalpErrorBoundary extends React.Component<ErrorBoundaryProps, Err
 const BreakoutScalpInnerView: React.FC<BreakoutScalpViewProps> = ({ onTriggerAlert }) => {
   const [configs, setConfigs] = useState<Record<string, BreakoutScalpAssetConfig>>(() => loadScalpConfigs());
   const [selectedSymbol, setSelectedSymbol] = useState<string>('BTC/USDT');
+  const [selectedTier, setSelectedTier] = useState<EntryTierId>(0);
+  const [entryTiersState, setEntryTiersState] = useState<AssetTiersMap>(() =>
+    loadEntryTiersState(SCALP_ASSETS.map(a => a.symbol))
+  );
   const [activeTab, setActiveTab] = useState<ScalpSide>('bull');
 
   // Multi-timeframe Candle states for the current asset
@@ -131,6 +144,59 @@ const BreakoutScalpInnerView: React.FC<BreakoutScalpViewProps> = ({ onTriggerAle
       return next;
     });
   }, [selectedSymbol]);
+
+  const updateActiveTierState = useCallback(
+    (tier: ActiveTierId, updater: (prev: TierTradeState) => TierTradeState) => {
+      setEntryTiersState(prev => {
+        const assetMap = prev[selectedSymbol];
+        const nextAssetMap = {
+          ...assetMap,
+          [tier]: updater(assetMap[tier]),
+        };
+        const next = {
+          ...prev,
+          [selectedSymbol]: nextAssetMap,
+        };
+        saveEntryTiersState(next);
+        return next;
+      });
+    },
+    [selectedSymbol]
+  );
+
+  const handleUpgradeTier = useCallback(
+    (fromTier: ActiveTierId, toTier: ActiveTierId) => {
+      setEntryTiersState(prev => {
+        const assetMap = prev[selectedSymbol];
+        const source = assetMap[fromTier];
+        if (!source.htfConfirmed) return prev;
+        const target = assetMap[toTier];
+        // Keep target's enteredAt completely independent (never share timers across tiers)
+        const nextTarget: TierTradeState = target.enteredAt
+          ? target
+          : {
+              ...target,
+              signals: target.signals.length > 0 ? target.signals : [...source.signals],
+              entryPrice: target.entryPrice ?? source.entryPrice,
+              stopPrice: target.stopPrice ?? source.stopPrice,
+              takeProfitPrice: target.takeProfitPrice ?? source.takeProfitPrice,
+              marketCloseTime: source.marketCloseTime || target.marketCloseTime,
+              note: target.note || source.note,
+            };
+        const next = {
+          ...prev,
+          [selectedSymbol]: {
+            ...assetMap,
+            [toTier]: nextTarget,
+          },
+        };
+        saveEntryTiersState(next);
+        return next;
+      });
+      setSelectedTier(toTier);
+    },
+    [selectedSymbol]
+  );
 
   // Asset switcher handler: immediately clear candles to prevent cross-asset leakage
   const handleSelectAsset = (symbol: string) => {
@@ -532,6 +598,48 @@ const BreakoutScalpInnerView: React.FC<BreakoutScalpViewProps> = ({ onTriggerAle
         </div>
       </div>
 
+      {/* Entry Tiers Selector Bar (ระยะ 0 / 1 / 2 / 3) */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 bg-slate-900 border border-slate-800 p-2 rounded-xl">
+        {(
+          [
+            { id: 0 as EntryTierId, label: 'ระยะ 0: Scalp (นาที)', desc: 'Breakout Scalp เดิม' },
+            { id: 1 as EntryTierId, label: 'ระยะ 1: สั้น (≤ 1 สัปดาห์)', desc: 'ปกติ 24 ชม. / สูงสุด 5 วัน' },
+            { id: 2 as EntryTierId, label: 'ระยะ 2: กลาง', desc: 'Daily ยืนยัน + ไม่มี Invalidation' },
+            { id: 3 as EntryTierId, label: 'ระยะ 3: ยาว', desc: 'ครบทุกชั้น + Dow Theory SL' },
+          ]
+        ).map(tier => {
+          const isActive = selectedTier === tier.id;
+          const hasRunningTimer =
+            tier.id !== 0 && Boolean(entryTiersState[selectedSymbol]?.[tier.id as ActiveTierId]?.enteredAt);
+          return (
+            <button
+              key={tier.id}
+              onClick={() => setSelectedTier(tier.id)}
+              className={`flex flex-col items-start px-3 py-2 rounded-lg text-left transition-all cursor-pointer border ${
+                isActive
+                  ? 'bg-amber-500 text-slate-950 border-amber-400 shadow-md shadow-amber-500/20'
+                  : 'bg-slate-950 text-slate-300 hover:text-white border-slate-800'
+              }`}
+            >
+              <div className="flex items-center justify-between w-full gap-1.5">
+                <span className="text-xs font-bold">{tier.label}</span>
+                {hasRunningTimer && (
+                  <span
+                    className={`w-2 h-2 rounded-full shrink-0 ${
+                      isActive ? 'bg-slate-950' : 'bg-emerald-400 animate-pulse'
+                    }`}
+                    title="กำลังนับเวลา Time Stop"
+                  />
+                )}
+              </div>
+              <span className={`text-[10px] ${isActive ? 'text-slate-900 font-semibold' : 'text-slate-500'}`}>
+                {tier.desc}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
       {/* Fetch Error Banner */}
       {fetchError && (
         <div className="bg-rose-950/50 border border-rose-800/80 rounded-xl p-3.5 flex items-center justify-between text-rose-300 text-xs shadow-md">
@@ -552,7 +660,20 @@ const BreakoutScalpInnerView: React.FC<BreakoutScalpViewProps> = ({ onTriggerAle
         </div>
       )}
 
-      {/* Main Grid: Left Chart + Config, Right Checklist 0-8 */}
+      {selectedTier !== 0 ? (
+        <EntryTiersPanel
+          symbol={selectedSymbol}
+          thaiName={currentConfig.thaiName}
+          decimals={currentConfig.decimals}
+          activeTier={selectedTier as ActiveTierId}
+          tierState={entryTiersState[selectedSymbol][selectedTier as ActiveTierId]}
+          latestPrice={lastClosedCandle ? lastClosedCandle.close : null}
+          d1Candles={d1Candles}
+          onUpdateTierState={updater => updateActiveTierState(selectedTier as ActiveTierId, updater)}
+          onUpgradeTier={handleUpgradeTier}
+        />
+      ) : (
+      /* Main Grid: Left Chart + Config, Right Checklist 0-8 (Tier 0: Breakout Scalp) */
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
         {/* Left Column (7 cols): Chart & Asset Parameters */}
         <div className="lg:col-span-7 flex flex-col gap-4">
@@ -1175,6 +1296,7 @@ const BreakoutScalpInnerView: React.FC<BreakoutScalpViewProps> = ({ onTriggerAle
           </div>
         </div>
       </div>
+      )}
     </div>
   );
 };
