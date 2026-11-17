@@ -22,6 +22,11 @@
 - [done] Added 'unclear' fallback to thesis_relation and added third box "ยังไม่ชัดว่าหนุนหรือขัด"
 - [done] Updated `TradingChart.tsx` S/R controls: added toolbar "ลบเส้น S/R" button, panel "ลบเส้น" button, Trendline tooltip clarification, auto-clear S/R on symbol switch (preserved on timeframe switch), and `Esc` to exit S/R drawing mode
 - [done] Updated Bullish Engulfing indicators in `TradingChart.tsx` to render as compact dots by default and expand the full `"Buyer จริง"` / `"อาจเป็น short covering"` label only on candle hover
+- [done] Added 15s background price alert polling in `App.tsx` for all non-selected Binance/Yahoo assets using closed 1m high/low wicks (`gte` vs `high`, `lte` vs `low`), skipping CSV assets
+- [done] Cleared `candles` immediately on symbol/timeframe switch in `App.tsx` and guarded REST/WebSocket messages with `activeChartKeyRef`; kept `TradingChart` mounted across TF switches for Binance/Yahoo assets
+- [done] Reset `visibleCount=60`, `panOffset=0`, `priceScaleMultiplier=1`, `pricePanOffset=0`, and cleared `trendlines`/`trendlineRedoStack`/`trendlineStart`/`selectedTrendlineId` on symbol switch in `TradingChart.tsx`; reset Y-axis scale/pan on timeframe switch while preserving horizontal zoom
+- [done] Enabled live Binance REST + WebSocket (`solusdt`) for `SOL/USDT` and `/api/klines` (`GC=F`) for `XAU/USD` with `"COMEX Gold Futures (GC=F)"` label and real Yahoo connection/error status in `App.tsx`
+- [done] Updated `server.ts` `/api/klines` to respond with HTTP 400 `"ไม่รองรับ symbol นี้"` for unknown symbols instead of defaulting to Silver
 
 ## Mode 2 · Breakout Scalp (แบบที่ 2) Refinements
 - [done] Added directional extreme detection (extremeUp vs extremeDown) and signed EMA50 H4 distance in Step 0

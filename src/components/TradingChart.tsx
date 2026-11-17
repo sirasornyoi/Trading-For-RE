@@ -90,12 +90,28 @@ export const TradingChart: React.FC<TradingChartProps> = ({
   const [isDrawingSr, setIsDrawingSr] = useState<boolean>(false);
   const [showSrPanel, setShowSrPanel] = useState<boolean>(false);
 
-  // Clear S/R line automatically when switching symbol (keep across timeframe changes)
+  // Clear S/R, Trendlines, and reset viewport when switching symbol (keep across timeframe changes)
   useEffect(() => {
     setSrLevel(null);
     setShowSrPanel(false);
     setIsDrawingSr(false);
+    setTrendlines([]);
+    setTrendlineRedoStack([]);
+    setTrendlineStart(null);
+    setSelectedTrendlineId(null);
+    setIsDrawingTrendline(false);
+    setMousePriceHover(null);
+    setVisibleCount(60);
+    setPanOffset(0);
+    setPriceScaleMultiplier(1.0);
+    setPricePanOffset(0);
   }, [symbol]);
+
+  // Reset vertical scale & pan when switching timeframe (preserve horizontal zoom/pan)
+  useEffect(() => {
+    setPricePanOffset(0);
+    setPriceScaleMultiplier(1.0);
+  }, [timeframe]);
 
   // Viewport zoom & pan offset
   const [visibleCount, setVisibleCount] = useState<number>(60);

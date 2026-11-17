@@ -213,11 +213,13 @@ app.get('/api/klines', async (req, res) => {
     const timeframe = (req.query.timeframe as string) || '1d';
 
     // Map app symbol to Yahoo Finance ticker
-    let yahooSymbol = 'SI=F'; // Default COMEX Silver in USD
+    let yahooSymbol: string;
     if (symbolParam === 'XAG/USD' || symbolParam === 'SI1!' || symbolParam.toUpperCase().includes('SILVER')) {
       yahooSymbol = 'SI=F';
     } else if (symbolParam === 'XAU/USD' || symbolParam === 'GC1!') {
       yahooSymbol = 'GC=F';
+    } else {
+      return res.status(400).json({ error: 'ไม่รองรับ symbol นี้' });
     }
 
     // Map timeframe to Yahoo Finance interval & range

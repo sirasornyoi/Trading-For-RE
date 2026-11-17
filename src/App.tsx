@@ -31,6 +31,18 @@ import { UploadCloud, FileSpreadsheet, Trash2, CheckCircle, AlertCircle, Sparkle
 const ALERTS_STORAGE_KEY = 'apextrade_alerts_v2';
 const APP_MODE_STORAGE_KEY = 'apextrade_app_mode';
 
+function isBinanceSymbol(symbol: string): boolean {
+  return symbol === 'BTC/USDT' || symbol === 'ETH/USDT' || symbol === 'SOL/USDT';
+}
+
+function isYahooSymbol(symbol: string): boolean {
+  return symbol === 'XAG/USD' || symbol === 'SI1!' || symbol === 'XAU/USD' || symbol === 'GC1!';
+}
+
+function isGoldSymbol(symbol: string): boolean {
+  return symbol === 'XAU/USD' || symbol === 'GC1!';
+}
+
 function formatCandleDate(timestampSec: number): string {
   const d = new Date(timestampSec * 1000);
   const yyyy = d.getFullYear();
@@ -72,11 +84,14 @@ export default function App() {
   const [candles, setCandles] = useState<Candle[]>([]);
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
   const [isLiveWs, setIsLiveWs] = useState<boolean>(false);
+  const [yahooConnStatus, setYahooConnStatus] = useState<'loading' | 'connected' | 'error'>('loading');
   const [csvUploadError, setCsvUploadError] = useState<string | null>(null);
   const [csvUploadSuccess, setCsvUploadSuccess] = useState<string | null>(null);
   const [isWeeklyView, setIsWeeklyView] = useState<boolean>(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const activeChartKeyRef = useRef<string>(`${selectedSymbol}|${timeframe}`);
+  const lastChecked1mCandleTimeRef = useRef<Record<string, number>>({});
 
   // Price Alerts (delete default sample alerts; only load user saved alerts or empty)
   const [alerts, setAlerts] = useState<PriceAlert[]>(() => {
@@ -194,10 +209,11 @@ export default function App() {
   }, []);
 
   const currentAsset = assets.find(a => a.symbol === selectedSymbol) || assets[0];
-  const isBinanceAsset = selectedSymbol === 'BTC/USDT' || selectedSymbol === 'ETH/USDT';
-  const isSilverAsset = selectedSymbol === 'XAG/USD' || selectedSymbol === 'SI1!';
+  const isBinanceAsset = isBinanceSymbol(selectedSymbol);
+  const isYahooAsset = isYahooSymbol(selectedSymbol);
+  const isGoldAsset = isGoldSymbol(selectedSymbol);
 
-  const isCsvDaily = !isBinanceAsset && !isSilverAsset && !!(currentAsset.csvTimeframe?.toLowerCase().includes('d') || currentAsset.csvTimeframe?.toLowerCase().includes('day') || currentAsset.csvTimeframe === '1D' || currentAsset.csvTimeframe === '1d');
+  const isCsvDaily = !isBinanceAsset && !isYahooAsset && !!(currentAsset.csvTimeframe?.toLowerCase().includes('d') || currentAsset.csvTimeframe?.toLowerCase().includes('day') || currentAsset.csvTimeframe === '1D' || currentAsset.csvTimeframe === '1d');
 
   const displayedCandles = useMemo(() => {
     if (isCsvDaily && isWeeklyView) {
@@ -213,13 +229,16 @@ export default function App() {
     } catch {}
   }, [alerts]);
 
-  // Check alerts against real price update
-  const checkPriceAlerts = useCallback((symbol: string, newPrice: number) => {
+  // Check alerts against real price update (optionally scoped to 'gte' or 'lte')
+  const checkPriceAlerts = useCallback((symbol: string, newPrice: number, onlyCondition?: 'gte' | 'lte') => {
     setAlerts(prevAlerts => {
       let triggeredOne: PriceAlert | null = null;
 
       const updated = prevAlerts.map(alert => {
         if (alert.symbol !== symbol) {
+          return alert;
+        }
+        if (onlyCondition && alert.condition !== onlyCondition) {
           return alert;
         }
 
@@ -283,17 +302,101 @@ export default function App() {
     });
   }, []);
 
+  const alertsRef = useRef<PriceAlert[]>(alerts);
+  useEffect(() => {
+    alertsRef.current = alerts;
+  }, [alerts]);
+
+  const selectedSymbolRef = useRef<string>(selectedSymbol);
+  useEffect(() => {
+    selectedSymbolRef.current = selectedSymbol;
+    delete lastChecked1mCandleTimeRef.current[selectedSymbol];
+  }, [selectedSymbol]);
+
+  // Background 15s price alert checker for all non-selected assets with active alerts (Binance & Yahoo only)
+  useEffect(() => {
+    const checkBackgroundPriceAlerts = async () => {
+      const currentAlerts = alertsRef.current;
+      const activeSymbols = new Set<string>();
+
+      for (const a of currentAlerts) {
+        if (a.status !== 'active') continue;
+        if (a.symbol === selectedSymbolRef.current) continue;
+        if (!isBinanceSymbol(a.symbol) && !isYahooSymbol(a.symbol)) continue;
+        activeSymbols.add(a.symbol);
+      }
+
+      for (const sym of activeSymbols) {
+        try {
+          let klines: Candle[] = [];
+          if (isBinanceSymbol(sym)) {
+            const cleanSymbol = sym.replace('/', '').toUpperCase();
+            const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${cleanSymbol}&interval=1m&limit=20`);
+            if (!res.ok) continue;
+            const data = await res.json();
+            if (!Array.isArray(data)) continue;
+            klines = data.map((item: (number | string)[]) => ({
+              time: Math.floor(Number(item[0]) / 1000),
+              open: parseFloat(item[1] as string),
+              high: parseFloat(item[2] as string),
+              low: parseFloat(item[3] as string),
+              close: parseFloat(item[4] as string),
+              volume: parseFloat(item[5] as string) || 0,
+            }));
+          } else if (isYahooSymbol(sym)) {
+            const res = await fetch(`/api/klines?symbol=${encodeURIComponent(sym)}&timeframe=1m`);
+            if (!res.ok) continue;
+            const data = await res.json();
+            klines = Array.isArray(data.candles) ? data.candles : [];
+          }
+
+          const closed1m = filterClosedCandles(klines, 60).sort((a, b) => a.time - b.time);
+          if (closed1m.length === 0) continue;
+
+          const prevCheckedTime = lastChecked1mCandleTimeRef.current[sym];
+          const candlesToCheck =
+            prevCheckedTime === undefined
+              ? [closed1m[closed1m.length - 1]]
+              : closed1m.filter(c => c.time > prevCheckedTime);
+
+          if (candlesToCheck.length === 0) continue;
+
+          lastChecked1mCandleTimeRef.current[sym] = candlesToCheck[candlesToCheck.length - 1].time;
+
+          const symAlerts = alertsRef.current.filter(a => a.symbol === sym && a.status === 'active');
+          const hasGte = symAlerts.some(a => a.condition === 'gte');
+          const hasLte = symAlerts.some(a => a.condition === 'lte');
+
+          for (const c of candlesToCheck) {
+            if (hasGte) checkPriceAlerts(sym, c.high, 'gte');
+            if (hasLte) checkPriceAlerts(sym, c.low, 'lte');
+          }
+        } catch {
+          // ignore transient poll failure
+        }
+      }
+    };
+
+    const interval = setInterval(checkBackgroundPriceAlerts, 15000);
+    checkBackgroundPriceAlerts();
+    return () => clearInterval(interval);
+  }, [checkPriceAlerts]);
+
   // Load candle data for current selected asset
   useEffect(() => {
     setCsvUploadError(null);
     setCsvUploadSuccess(null);
 
+    const chartKey = `${selectedSymbol}|${timeframe}`;
+    activeChartKeyRef.current = chartKey;
+    setCandles([]);
+
     if (isBinanceAsset) {
-      // Load real klines from Binance REST API for BTC or ETH
+      // Load real klines from Binance REST API for BTC, ETH, or SOL
       let isMounted = true;
       fetchBinanceKlines(selectedSymbol, timeframe)
         .then(klineCandles => {
-          if (!isMounted) return;
+          if (!isMounted || activeChartKeyRef.current !== chartKey) return;
           if (klineCandles.length > 0) {
             setCandles(klineCandles);
             const last = klineCandles[klineCandles.length - 1];
@@ -325,17 +428,22 @@ export default function App() {
       return () => {
         isMounted = false;
       };
-    } else if (isSilverAsset) {
-      // Load real klines and price for Silver/USD via backend Yahoo Finance proxy
+    } else if (isYahooAsset) {
+      // Load real klines and price for Silver/Gold via backend Yahoo Finance proxy
       let isMounted = true;
-      const loadSilver = () => {
+      setYahooConnStatus('loading');
+      setIsLiveWs(false);
+
+      const loadYahoo = () => {
         fetchSilverKlines(selectedSymbol, timeframe)
-          .then(({ candles: silverCandles, source, price }) => {
-            if (!isMounted) return;
-            if (silverCandles.length > 0) {
-              setCandles(silverCandles);
-              const last = silverCandles[silverCandles.length - 1];
-              const prev = silverCandles.length > 1 ? silverCandles[silverCandles.length - 2] : last;
+          .then(({ candles: yahooCandles, source, price }) => {
+            if (!isMounted || activeChartKeyRef.current !== chartKey) return;
+            if (yahooCandles.length > 0) {
+              setYahooConnStatus('connected');
+              setIsLiveWs(true);
+              setCandles(yahooCandles);
+              const last = yahooCandles[yahooCandles.length - 1];
+              const prev = yahooCandles.length > 1 ? yahooCandles[yahooCandles.length - 2] : last;
               const change = prev.close > 0 ? ((price - prev.close) / prev.close) * 100 : 0;
               const lastDate = formatCandleDate(last.time);
 
@@ -353,15 +461,21 @@ export default function App() {
               }));
 
               checkPriceAlerts(selectedSymbol, price);
+            } else {
+              setYahooConnStatus('error');
+              setIsLiveWs(false);
             }
           })
           .catch(err => {
-            console.warn('Silver klines fetch failed:', err);
+            if (!isMounted || activeChartKeyRef.current !== chartKey) return;
+            console.warn('Yahoo klines fetch failed:', err);
+            setYahooConnStatus('error');
+            setIsLiveWs(false);
           });
       };
 
-      loadSilver();
-      const intervalId = setInterval(loadSilver, 30000);
+      loadYahoo();
+      const intervalId = setInterval(loadYahoo, 30000);
 
       return () => {
         isMounted = false;
@@ -408,24 +522,28 @@ export default function App() {
         }));
       }
     }
-  }, [selectedSymbol, timeframe, isBinanceAsset, isSilverAsset, checkPriceAlerts]);
+  }, [selectedSymbol, timeframe, isBinanceAsset, isYahooAsset, checkPriceAlerts]);
 
-  // Real Binance @kline_<interval> WebSocket for BTC and ETH real price updates
+  // Real Binance @kline_<interval> WebSocket for BTC, ETH, and SOL real price updates
   useEffect(() => {
     if (!isBinanceAsset || typeof window === 'undefined') {
-      setIsLiveWs(isSilverAsset);
+      if (!isYahooAsset) setIsLiveWs(false);
       return;
     }
 
     let ws: WebSocket | null = null;
-    const streamSymbol = selectedSymbol === 'BTC/USDT' ? 'btcusdt' : 'ethusdt';
+    const wsKey = `${selectedSymbol}|${timeframe}`;
+    const wsSymbol = selectedSymbol;
+    const streamSymbol = selectedSymbol.replace('/', '').toLowerCase();
 
     try {
       ws = new WebSocket(`wss://stream.binance.com:9443/ws/${streamSymbol}@kline_${timeframe}`);
       ws.onopen = () => {
+        if (activeChartKeyRef.current !== wsKey) return;
         setIsLiveWs(true);
       };
       ws.onmessage = (event) => {
+        if (activeChartKeyRef.current !== wsKey) return;
         try {
           const data = JSON.parse(event.data);
           if (data && data.k) {
@@ -442,7 +560,7 @@ export default function App() {
               const formattedDate = formatCandleDate(openTime);
 
               // Check alerts on real price updates
-              checkPriceAlerts(selectedSymbol, close);
+              checkPriceAlerts(wsSymbol, close);
 
               // Update candle series: update while open, append/finalize when closed
               setCandles(prevCandles => {
@@ -475,7 +593,7 @@ export default function App() {
                 }
 
                 setAssets(prevAssets => prevAssets.map(a => {
-                  if (a.symbol === selectedSymbol) {
+                  if (a.symbol === wsSymbol) {
                     return {
                       ...a,
                       price: close,
@@ -508,16 +626,20 @@ export default function App() {
           }
         } catch {}
       };
-      ws.onerror = () => setIsLiveWs(false);
-      ws.onclose = () => setIsLiveWs(false);
+      ws.onerror = () => {
+        if (activeChartKeyRef.current === wsKey) setIsLiveWs(false);
+      };
+      ws.onclose = () => {
+        if (activeChartKeyRef.current === wsKey) setIsLiveWs(false);
+      };
     } catch {
-      setIsLiveWs(false);
+      if (activeChartKeyRef.current === wsKey) setIsLiveWs(false);
     }
 
     return () => {
       if (ws) ws.close();
     };
-  }, [selectedSymbol, timeframe, isBinanceAsset, checkPriceAlerts]);
+  }, [selectedSymbol, timeframe, isBinanceAsset, isYahooAsset, checkPriceAlerts]);
 
   // Handle TradingView CSV File Upload
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -735,7 +857,7 @@ export default function App() {
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 min-h-[580px]">
             {/* Interactive Trading Chart (9 Cols on desktop) */}
             <div className="lg:col-span-9 h-[580px] lg:h-auto min-h-[520px]">
-              {candles.length > 0 ? (
+              {(candles.length > 0 || isBinanceAsset || isYahooAsset) ? (
                 <TradingChart
                   candles={displayedCandles}
                   symbol={selectedSymbol}
@@ -750,7 +872,7 @@ export default function App() {
                     setIsAlertModalOpen(true);
                   }}
                   isLive={isLiveWs}
-                  isTimeframeDisabled={!isBinanceAsset && !isSilverAsset}
+                  isTimeframeDisabled={!isBinanceAsset && !isYahooAsset}
                   isWeeklyView={isWeeklyView}
                   onToggleWeeklyView={() => setIsWeeklyView(v => !v)}
                   canToggleWeeklyView={isCsvDaily}
@@ -860,7 +982,7 @@ export default function App() {
                       <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
                       Binance Live
                     </span>
-                  ) : isSilverAsset ? (
+                  ) : isYahooAsset ? (
                     <span className="text-[10px] font-mono text-emerald-400 flex items-center gap-1">
                       <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
                       Yahoo Finance (COMEX)
@@ -881,17 +1003,29 @@ export default function App() {
                       สถานะ WebSocket: {isLiveWs ? <span className="text-emerald-400 font-semibold">กำลังเชื่อมต่อ (Connected)</span> : <span className="text-slate-400">รอการเชื่อมต่อ</span>}
                     </div>
                   </div>
-                ) : isSilverAsset ? (
+                ) : isYahooAsset ? (
                   <div className="text-xs text-slate-400 space-y-2">
                     <p className="leading-relaxed">
-                      ดึงข้อมูลราคา COMEX Silver Futures (<span className="text-slate-200 font-mono">SI=F</span>) อัตโนมัติจาก Yahoo Finance แบบ Real-time ไม่ต้องอัปโหลด CSV
+                      ดึงข้อมูลราคา {isGoldAsset ? 'COMEX Gold Futures' : 'COMEX Silver Futures'} (<span className="text-slate-200 font-mono">{isGoldAsset ? 'GC=F' : 'SI=F'}</span>) อัตโนมัติจาก Yahoo Finance แบบ Real-time ไม่ต้องอัปโหลด CSV
                     </p>
-                    <div className="text-[11px] text-slate-400 bg-slate-950 p-2 rounded-lg border border-slate-800 flex items-center justify-between">
-                      <span>สถานะการเชื่อมต่อ:</span>
-                      <span className="text-emerald-400 font-semibold flex items-center gap-1">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-                        เชื่อมต่อแล้ว (อัปเดตทุก 30 วินาที)
-                      </span>
+                    <div className="text-[11px] text-slate-400 bg-slate-950 p-2 rounded-lg border border-slate-800 flex items-center justify-between gap-2">
+                      <span className="shrink-0">สถานะการเชื่อมต่อ:</span>
+                      {yahooConnStatus === 'connected' ? (
+                        <span className="text-emerald-400 font-semibold flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                          เชื่อมต่อแล้ว (อัปเดตทุก 30 วินาที)
+                        </span>
+                      ) : yahooConnStatus === 'error' ? (
+                        <span className="text-rose-400 font-semibold flex items-center gap-1 text-right">
+                          <span className="w-1.5 h-1.5 rounded-full bg-rose-400 shrink-0"></span>
+                          ดึงข้อมูลไม่สำเร็จ — ลองใหม่อัตโนมัติใน 30 วิ
+                        </span>
+                      ) : (
+                        <span className="text-slate-400 font-semibold flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-pulse"></span>
+                          กำลังเชื่อมต่อ...
+                        </span>
+                      )}
                     </div>
                   </div>
                 ) : (
