@@ -166,27 +166,33 @@ const BreakoutScalpInnerView: React.FC<BreakoutScalpViewProps> = ({ onTriggerAle
 
   const handleUpgradeTier = useCallback(
     (fromTier: ActiveTierId, toTier: ActiveTierId) => {
+      const upgradeTimestamp = Date.now();
       setEntryTiersState(prev => {
         const assetMap = prev[selectedSymbol];
         const source = assetMap[fromTier];
         if (!source.htfConfirmed) return prev;
         const target = assetMap[toTier];
-        // Keep target's enteredAt completely independent (never share timers across tiers)
-        const nextTarget: TierTradeState = target.enteredAt
-          ? target
-          : {
-              ...target,
-              signals: target.signals.length > 0 ? target.signals : [...source.signals],
-              entryPrice: target.entryPrice ?? source.entryPrice,
-              stopPrice: target.stopPrice ?? source.stopPrice,
-              takeProfitPrice: target.takeProfitPrice ?? source.takeProfitPrice,
-              marketCloseTime: source.marketCloseTime || target.marketCloseTime,
-              note: target.note || source.note,
-            };
+        // Stop old tier timer so it won't trigger 24h/5d warnings on an upgraded trade,
+        // and immediately start the new tier's independent timer.
+        const nextSource: TierTradeState = {
+          ...source,
+          enteredAt: null,
+        };
+        const nextTarget: TierTradeState = {
+          ...target,
+          signals: target.signals.length > 0 ? target.signals : [...source.signals],
+          entryPrice: target.entryPrice ?? source.entryPrice,
+          stopPrice: target.stopPrice ?? source.stopPrice,
+          takeProfitPrice: target.takeProfitPrice ?? source.takeProfitPrice,
+          marketCloseTime: source.marketCloseTime || target.marketCloseTime,
+          note: target.note || source.note,
+          enteredAt: upgradeTimestamp,
+        };
         const next = {
           ...prev,
           [selectedSymbol]: {
             ...assetMap,
+            [fromTier]: nextSource,
             [toTier]: nextTarget,
           },
         };

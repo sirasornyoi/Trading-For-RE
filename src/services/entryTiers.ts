@@ -354,16 +354,25 @@ function getMsUntilNextMarketClose(nowMs: number, marketCloseTime: string): numb
   return target.getTime() - now.getTime();
 }
 
+export function hasMarketCloseSession(symbol: string): boolean {
+  return symbol === 'XAU/USD' || symbol === 'XAG/USD';
+}
+
 export function evaluateTierTimeStop(
   tier: ActiveTierId,
   enteredAt: number | null,
   marketCloseTime: string,
-  nowMs: number
+  nowMs: number,
+  hasMarketClose: boolean = true
 ): TierTimeStopStatus {
+  const msToClose = hasMarketClose ? getMsUntilNextMarketClose(nowMs, marketCloseTime) : null;
+
   if (!enteredAt) {
     const defaultHeadline =
       tier === 1
-        ? 'ยังไม่เริ่มนับเวลา (ปกติปิดใน 24 ชม. / สูงสุดไม่เกิน 5 วันและก่อนตลาดปิด)'
+        ? hasMarketClose
+          ? 'ยังไม่เริ่มนับเวลา (ปกติปิดใน 24 ชม. / สูงสุดไม่เกิน 5 วันและก่อนตลาดปิด)'
+          : 'ยังไม่เริ่มนับเวลา (ปกติปิดใน 24 ชม. / สูงสุดไม่เกิน 5 วัน)'
         : tier === 2
         ? 'ยังไม่เริ่มนับเวลา (ถือต่อเมื่อ Daily ยืนยัน + ไม่มี Invalidation)'
         : 'ยังไม่เริ่มนับเวลา (ถือตามโครงสร้าง Weekly/Daily)';
@@ -374,13 +383,12 @@ export function evaluateTierTimeStop(
       severity: 'idle',
       headline: defaultHeadline,
       warnings: [],
-      msToMarketClose: getMsUntilNextMarketClose(nowMs, marketCloseTime),
+      msToMarketClose: msToClose,
     };
   }
 
   const elapsedMs = Math.max(0, nowMs - enteredAt);
   const elapsedText = formatDurationMs(elapsedMs);
-  const msToClose = getMsUntilNextMarketClose(nowMs, marketCloseTime);
   const warnings: string[] = [];
 
   if (tier === 1) {
@@ -403,10 +411,14 @@ export function evaluateTierTimeStop(
     } else if (elapsedMs >= H24) {
       severity = 'warn';
       headline = 'ครบ 24 ชม. แล้ว — ปกติควรปิดสถานะ';
-      warnings.push('ครบ 24 ชม. แล้ว: ปกติปิดใน 24 ชม. (ถือเกินได้ไม่เกิน 5 วันและก่อนตลาดปิด)');
+      warnings.push(
+        hasMarketClose
+          ? 'ครบ 24 ชม. แล้ว: ปกติปิดใน 24 ชม. (ถือเกินได้ไม่เกิน 5 วันและก่อนตลาดปิด)'
+          : 'ครบ 24 ชม. แล้ว: ปกติปิดใน 24 ชม. (ถือเกินได้ไม่เกิน 5 วัน)'
+      );
     }
 
-    if (msToClose !== null && msToClose <= NEAR_CLOSE_MS) {
+    if (hasMarketClose && msToClose !== null && msToClose <= NEAR_CLOSE_MS) {
       severity = 'critical';
       const minsLeft = Math.max(1, Math.ceil(msToClose / 60000));
       warnings.push(`เตือนหนัก: ใกล้เวลาตลาดปิด (${marketCloseTime}) ในอีก ${minsLeft} นาที`);

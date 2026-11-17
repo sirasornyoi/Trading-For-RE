@@ -9,6 +9,7 @@ import {
   evaluateTierRR,
   evaluateTierTimeStop,
   formatDurationMs,
+  hasMarketCloseSession,
 } from '../services/entryTiers';
 import {
   CheckCircle2,
@@ -80,14 +81,15 @@ export const EntryTiersPanel: React.FC<EntryTiersPanelProps> = ({
   }, [symbol, activeTier]);
 
   const meta = TIER_META[activeTier];
+  const showMarketClose = hasMarketCloseSession(symbol);
   const dailyRsi = useMemo(() => evaluateDailyRsi(d1Candles), [d1Candles]);
   const rrEval = useMemo(
     () => evaluateTierRR(tierState.entryPrice, tierState.stopPrice, tierState.takeProfitPrice),
     [tierState.entryPrice, tierState.stopPrice, tierState.takeProfitPrice]
   );
   const timeStop = useMemo(
-    () => evaluateTierTimeStop(activeTier, tierState.enteredAt, tierState.marketCloseTime, nowMs),
-    [activeTier, tierState.enteredAt, tierState.marketCloseTime, nowMs]
+    () => evaluateTierTimeStop(activeTier, tierState.enteredAt, tierState.marketCloseTime, nowMs, showMarketClose),
+    [activeTier, tierState.enteredAt, tierState.marketCloseTime, nowMs, showMarketClose]
   );
 
   const visibleChecklist = useMemo(() => {
@@ -187,7 +189,11 @@ export const EntryTiersPanel: React.FC<EntryTiersPanelProps> = ({
                 </span>
               )}
             </div>
-            <p className="text-[11px] text-slate-400 mt-1">{meta.subtitle}</p>
+            <p className="text-[11px] text-slate-400 mt-1">
+              {activeTier === 1 && !showMarketClose
+                ? 'Technical ≥ 2 สัญญาณ + Fundamental ไม่สวน · ปกติปิดใน 24 ชม. (สูงสุด 5 วัน)'
+                : meta.subtitle}
+            </p>
             <p className="text-[11px] text-cyan-400 font-mono mt-0.5">กรอบ TF: {meta.tfRule}</p>
           </div>
 
@@ -559,26 +565,28 @@ export const EntryTiersPanel: React.FC<EntryTiersPanelProps> = ({
                 </span>
               </div>
 
-              {/* Market close time configuration */}
-              <div className="flex items-center gap-2">
-                <label className="text-[11px] text-slate-400">เวลาตลาดปิด:</label>
-                <input
-                  type="time"
-                  value={tierState.marketCloseTime}
-                  onChange={e =>
-                    onUpdateTierState(prev => ({
-                      ...prev,
-                      marketCloseTime: e.target.value,
-                    }))
-                  }
-                  className="bg-slate-950 border border-slate-700 rounded px-2 py-1 font-mono text-xs text-white focus:outline-none focus:border-amber-500"
-                />
-                {timeStop.msToMarketClose !== null && (
-                  <span className="text-[11px] text-slate-400 font-mono">
-                    (อีก {formatDurationMs(timeStop.msToMarketClose)})
-                  </span>
-                )}
-              </div>
+              {/* Market close time configuration (only for XAU/USD and XAG/USD) */}
+              {showMarketClose && (
+                <div className="flex items-center gap-2">
+                  <label className="text-[11px] text-slate-400">เวลาตลาดปิด:</label>
+                  <input
+                    type="time"
+                    value={tierState.marketCloseTime}
+                    onChange={e =>
+                      onUpdateTierState(prev => ({
+                        ...prev,
+                        marketCloseTime: e.target.value,
+                      }))
+                    }
+                    className="bg-slate-950 border border-slate-700 rounded px-2 py-1 font-mono text-xs text-white focus:outline-none focus:border-amber-500"
+                  />
+                  {timeStop.msToMarketClose !== null && (
+                    <span className="text-[11px] text-slate-400 font-mono">
+                      (อีก {formatDurationMs(timeStop.msToMarketClose)})
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
 
             <div className="flex flex-wrap items-center justify-between gap-3">
