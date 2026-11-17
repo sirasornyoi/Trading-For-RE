@@ -6,7 +6,6 @@ import {
   Timeframe 
 } from './types/trading';
 import { 
-  INITIAL_ASSETS, 
   fetchSilverKlines,
   parseTradingViewCSV, 
   getStoredCandles, 
@@ -29,22 +28,81 @@ import { AlertNotificationToast } from './components/AlertNotificationToast';
 import { RiskCalculator } from './components/RiskCalculator';
 import { MarketAnalysisView } from './components/MarketAnalysisView';
 import { BreakoutScalpView } from './components/BreakoutScalpView';
-import { SCALP_ASSETS, loadScalpConfigs, filterClosedCandles } from './services/breakoutScalp';
+import { AssetRegistryModal } from './components/AssetRegistryModal';
+import {
+  SCALP_STORAGE_KEY,
+  getScalpAssets,
+  getDefaultScalpConfigs,
+  loadScalpConfigs,
+  saveScalpConfigs,
+  filterClosedCandles,
+} from './services/breakoutScalp';
+import {
+  ENTRY_TIERS_STORAGE_KEY,
+  createDefaultAssetTiers,
+  saveEntryTiersState,
+} from './services/entryTiers';
+import {
+  RegistryAsset,
+  loadRegistry,
+  saveRegistry,
+  addAsset,
+  removeAsset,
+  resetRegistryToDefaults,
+  getAsset,
+  isKraken,
+  isYahoo,
+  toMarketAsset,
+} from './services/assetRegistry';
 import { UploadCloud, FileSpreadsheet, Trash2, CheckCircle, AlertCircle, Sparkles, X } from 'lucide-react';
 
 const ALERTS_STORAGE_KEY = 'apextrade_alerts_v2';
 const APP_MODE_STORAGE_KEY = 'apextrade_app_mode';
 
-function isKrakenSymbol(symbol: string): boolean {
-  return symbol === 'BTC/USD' || symbol === 'ETH/USD' || symbol === 'SOL/USD';
+function buildMode1Asset(reg: RegistryAsset): Asset {
+  const base = toMarketAsset(reg);
+  if (reg.source === 'CSV') {
+    const stored = getStoredCandles(reg.symbol);
+    if (stored && stored.length > 0) {
+      const last = stored[stored.length - 1];
+      const prev = stored.length > 1 ? stored[stored.length - 2] : last;
+      const change = prev.close > 0 ? ((last.close - prev.close) / prev.close) * 100 : 0;
+      const tf = detectCandleTimeframe(stored);
+      return {
+        ...base,
+        price: last.close,
+        changeVsPrevCandle: Number(change.toFixed(2)),
+        lastCandleDate: formatCandleDate(last.time),
+        dataSource: 'CSV Upload',
+        csvTimeframe: tf,
+      };
+    }
+  }
+  return base;
 }
 
-function isYahooSymbol(symbol: string): boolean {
-  return symbol === 'XAG/USD' || symbol === 'SI1!' || symbol === 'XAU/USD' || symbol === 'GC1!';
-}
+function ensureMode2DefaultsInStorage(nextRegistry: RegistryAsset[], symbol: string): void {
+  const asset = getAsset(symbol, nextRegistry);
+  if (!asset || !asset.showInMode2 || asset.source === 'CSV') return;
 
-function isGoldSymbol(symbol: string): boolean {
-  return symbol === 'XAU/USD' || symbol === 'GC1!';
+  try {
+    const rawScalp = localStorage.getItem(SCALP_STORAGE_KEY);
+    const parsedScalp = rawScalp ? JSON.parse(rawScalp) : {};
+    if (!parsedScalp || typeof parsedScalp !== 'object' || !(symbol in parsedScalp)) {
+      const defaults = getDefaultScalpConfigs(nextRegistry);
+      if (defaults[symbol]) {
+        saveScalpConfigs({ ...(parsedScalp || {}), [symbol]: defaults[symbol] });
+      }
+    }
+  } catch {}
+
+  try {
+    const rawTiers = localStorage.getItem(ENTRY_TIERS_STORAGE_KEY);
+    const parsedTiers = rawTiers ? JSON.parse(rawTiers) : {};
+    if (!parsedTiers || typeof parsedTiers !== 'object' || !(symbol in parsedTiers)) {
+      saveEntryTiersState({ ...(parsedTiers || {}), [symbol]: createDefaultAssetTiers() });
+    }
+  } catch {}
 }
 
 function formatCandleDate(timestampSec: number): string {
@@ -63,30 +121,28 @@ migrateUsdtToUsdStorage();
 export default function App() {
   const [activeView, setActiveView] = useState<'trade' | 'alerts' | 'calculator' | 'analysis'>('trade');
 
-  // Master asset list without any hardcoded/simulated prices
-  const [assets, setAssets] = useState<Asset[]>(() => {
-    return INITIAL_ASSETS.map(asset => {
-      // Check if CSV data is stored locally for this asset
-      const stored = getStoredCandles(asset.symbol);
-      if (stored && stored.length > 0) {
-        const last = stored[stored.length - 1];
-        const prev = stored.length > 1 ? stored[stored.length - 2] : last;
-        const change = prev.close > 0 ? ((last.close - prev.close) / prev.close) * 100 : 0;
-        const tf = detectCandleTimeframe(stored);
-        return {
-          ...asset,
-          price: last.close,
-          changeVsPrevCandle: Number(change.toFixed(2)),
-          lastCandleDate: formatCandleDate(last.time),
-          dataSource: 'CSV Upload',
-          csvTimeframe: tf,
-        };
-      }
-      return asset;
-    });
-  });
+  const [registry, setRegistry] = useState<RegistryAsset[]>(() => loadRegistry());
+  const [isRegistryModalOpen, setIsRegistryModalOpen] = useState<boolean>(false);
+  const registryRef = useRef<RegistryAsset[]>(registry);
+  useEffect(() => {
+    registryRef.current = registry;
+  }, [registry]);
 
-  const [selectedSymbol, setSelectedSymbol] = useState<string>('BTC/USD');
+  const mode1RegistryAssets = useMemo(
+    () => registry.filter(a => a.showInMode1),
+    [registry]
+  );
+
+  // Master asset list without any hardcoded/simulated prices
+  const [assets, setAssets] = useState<Asset[]>(() =>
+    loadRegistry()
+      .filter(a => a.showInMode1)
+      .map(buildMode1Asset)
+  );
+
+  const [selectedSymbol, setSelectedSymbol] = useState<string>(
+    () => loadRegistry().find(a => a.showInMode1)?.symbol || 'BTC/USD'
+  );
   const [timeframe, setTimeframe] = useState<Timeframe>('15m');
   const [candles, setCandles] = useState<Candle[]>([]);
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
@@ -136,8 +192,9 @@ export default function App() {
   // Background monitor: Check Breakout Scalp alerts across all enabled assets (works in both Mode 1 & 2)
   useEffect(() => {
     const checkScalpAlerts = async () => {
-      const configs = loadScalpConfigs();
-      for (const assetMeta of SCALP_ASSETS) {
+      const activeRegistry = registryRef.current;
+      const configs = loadScalpConfigs(activeRegistry);
+      for (const assetMeta of getScalpAssets(activeRegistry)) {
         const conf = configs[assetMeta.symbol];
         if (!conf || !conf.alertEnabled) continue;
         if (conf.levelHigh === null && conf.levelLow === null) continue;
@@ -147,7 +204,10 @@ export default function App() {
           if (assetMeta.source === 'Kraken') {
             klines = await fetchKrakenKlines(assetMeta.symbol, conf.timeframe as Timeframe);
           } else {
-            const res = await fetch(`/api/klines?symbol=${encodeURIComponent(assetMeta.symbol)}&timeframe=${conf.timeframe}`);
+            const tickerParam = assetMeta.providerSymbol
+              ? `&ticker=${encodeURIComponent(assetMeta.providerSymbol)}`
+              : '';
+            const res = await fetch(`/api/klines?symbol=${encodeURIComponent(assetMeta.symbol)}&timeframe=${conf.timeframe}${tickerParam}`);
             const data = await res.json();
             klines = data.candles || [];
           }
@@ -215,10 +275,39 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
-  const currentAsset = assets.find(a => a.symbol === selectedSymbol) || assets[0];
-  const isKrakenAsset = isKrakenSymbol(selectedSymbol);
-  const isYahooAsset = isYahooSymbol(selectedSymbol);
-  const isGoldAsset = isGoldSymbol(selectedSymbol);
+  // Sync Mode 1 assets list and active symbol when registry changes
+  useEffect(() => {
+    setAssets(prev => {
+      const prevMap = new Map<string, Asset>(prev.map(a => [a.symbol, a]));
+      return mode1RegistryAssets.map(reg => {
+        const existing = prevMap.get(reg.symbol);
+        if (existing) {
+          return {
+            ...existing,
+            name: reg.name,
+            thaiName: reg.thaiName,
+            icon: reg.icon,
+            unit: reg.unit,
+            decimals: reg.decimals,
+            category: reg.category,
+          };
+        }
+        return buildMode1Asset(reg);
+      });
+    });
+
+    if (mode1RegistryAssets.length > 0 && !mode1RegistryAssets.some(a => a.symbol === selectedSymbol)) {
+      setSelectedSymbol(mode1RegistryAssets[0].symbol);
+    }
+  }, [mode1RegistryAssets, selectedSymbol]);
+
+  const currentAsset =
+    assets.find(a => a.symbol === selectedSymbol) ||
+    assets[0] ||
+    toMarketAsset(registry[0]);
+  const currentRegAsset = getAsset(selectedSymbol, registry);
+  const isKrakenAsset = currentRegAsset?.source === 'Kraken';
+  const isYahooAsset = currentRegAsset?.source === 'Yahoo';
 
   const isCsvDaily = !isKrakenAsset && !isYahooAsset && !!(currentAsset.csvTimeframe?.toLowerCase().includes('d') || currentAsset.csvTimeframe?.toLowerCase().includes('day') || currentAsset.csvTimeframe === '1D' || currentAsset.csvTimeframe === '1d');
 
@@ -323,23 +412,26 @@ export default function App() {
   // Background 15s price alert checker for all non-selected assets with active alerts (Kraken & Yahoo only)
   useEffect(() => {
     const checkBackgroundPriceAlerts = async () => {
+      const activeRegistry = registryRef.current;
       const currentAlerts = alertsRef.current;
       const activeSymbols = new Set<string>();
 
       for (const a of currentAlerts) {
         if (a.status !== 'active') continue;
         if (a.symbol === selectedSymbolRef.current) continue;
-        if (!isKrakenSymbol(a.symbol) && !isYahooSymbol(a.symbol)) continue;
+        if (!isKraken(a.symbol, activeRegistry) && !isYahoo(a.symbol, activeRegistry)) continue;
         activeSymbols.add(a.symbol);
       }
 
       for (const sym of activeSymbols) {
         try {
           let klines: Candle[] = [];
-          if (isKrakenSymbol(sym)) {
+          if (isKraken(sym, activeRegistry)) {
             klines = await fetchKrakenKlines(sym, '1m');
-          } else if (isYahooSymbol(sym)) {
-            const res = await fetch(`/api/klines?symbol=${encodeURIComponent(sym)}&timeframe=1m`);
+          } else if (isYahoo(sym, activeRegistry)) {
+            const ticker = getAsset(sym, activeRegistry)?.providerSymbol || '';
+            const tickerParam = ticker ? `&ticker=${encodeURIComponent(ticker)}` : '';
+            const res = await fetch(`/api/klines?symbol=${encodeURIComponent(sym)}&timeframe=1m${tickerParam}`);
             if (!res.ok) continue;
             const data = await res.json();
             klines = Array.isArray(data.candles) ? data.candles : [];
@@ -429,8 +521,9 @@ export default function App() {
       setYahooConnStatus('loading');
       setIsLiveWs(false);
 
+      const yahooTicker = currentRegAsset?.providerSymbol || '';
       const loadYahoo = () => {
-        fetchSilverKlines(selectedSymbol, timeframe)
+        fetchSilverKlines(selectedSymbol, timeframe, yahooTicker)
           .then(({ candles: yahooCandles, source, price }) => {
             if (!isMounted || activeChartKeyRef.current !== chartKey) return;
             if (yahooCandles.length > 0) {
@@ -517,7 +610,7 @@ export default function App() {
         }));
       }
     }
-  }, [selectedSymbol, timeframe, isKrakenAsset, isYahooAsset, checkPriceAlerts]);
+  }, [selectedSymbol, timeframe, isKrakenAsset, isYahooAsset, currentRegAsset?.providerSymbol, checkPriceAlerts]);
 
   const candlesRef = useRef<Candle[]>(candles);
   useEffect(() => {
@@ -817,6 +910,64 @@ export default function App() {
     }));
   };
 
+  const handleAddRegistryAsset = useCallback((newAsset: RegistryAsset) => {
+    const next = addAsset(newAsset);
+    setRegistry(next);
+    if (next.find(a => a.symbol === newAsset.symbol)?.showInMode2) {
+      ensureMode2DefaultsInStorage(next, newAsset.symbol);
+    }
+  }, []);
+
+  const handleToggleRegistryMode = useCallback((symbol: string, mode: 'mode1' | 'mode2') => {
+    const current = loadRegistry();
+    const target = current.find(a => a.symbol === symbol);
+    if (!target) return;
+    if (mode === 'mode2' && target.source === 'CSV') {
+      throw new Error('สินทรัพย์ CSV ใช้ได้เฉพาะแบบที่ 1');
+    }
+
+    const next = current.map(a => {
+      if (a.symbol !== symbol) return a;
+      if (mode === 'mode1') return { ...a, showInMode1: !a.showInMode1 };
+      return { ...a, showInMode2: !a.showInMode2 };
+    });
+
+    if (next.filter(a => a.showInMode1).length === 0) {
+      throw new Error('ต้องเหลือสินทรัพย์ในแบบที่ 1 อย่างน้อย 1 รายการ');
+    }
+    if (next.filter(a => a.showInMode2).length === 0) {
+      throw new Error('ต้องเหลือสินทรัพย์ในแบบที่ 2 อย่างน้อย 1 รายการ');
+    }
+
+    saveRegistry(next);
+    setRegistry(next);
+    if (mode === 'mode2' && !target.showInMode2) {
+      ensureMode2DefaultsInStorage(next, symbol);
+    }
+  }, []);
+
+  const handleRemoveRegistryAsset = useCallback((symbol: string) => {
+    const next = removeAsset(symbol);
+    setRegistry(next);
+    setAlerts(prev => prev.filter(a => a.symbol !== symbol));
+    if (selectedSymbolRef.current === symbol) {
+      const firstMode1 = next.find(a => a.showInMode1);
+      if (firstMode1) {
+        setSelectedSymbol(firstMode1.symbol);
+      }
+    }
+  }, []);
+
+  const handleResetRegistryDefaults = useCallback(() => {
+    const next = resetRegistryToDefaults();
+    setRegistry(next);
+    for (const a of next) {
+      if (a.showInMode2) {
+        ensureMode2DefaultsInStorage(next, a.symbol);
+      }
+    }
+  }, []);
+
   const activeAlertCount = alerts.filter(a => a.status === 'active').length;
   const currentSymbolAlerts = alerts.filter(a => a.symbol === selectedSymbol && a.status === 'active');
   const hasRealPrice = currentAsset.price !== undefined && currentAsset.price !== null;
@@ -877,7 +1028,10 @@ export default function App() {
       {/* Main Content Area */}
       <main className="flex-1 max-w-[1720px] w-full mx-auto p-3 lg:p-4 space-y-3">
         {appMode === 'mode2' ? (
-          <BreakoutScalpView />
+          <BreakoutScalpView
+            registry={registry}
+            onOpenManageAssets={() => setIsRegistryModalOpen(true)}
+          />
         ) : (
           <>
         {/* Asset Selector Strip */}
@@ -890,6 +1044,7 @@ export default function App() {
             setSelectedSymbol(sym);
             if (fileInputRef.current) fileInputRef.current.click();
           }}
+          onOpenManageAssets={() => setIsRegistryModalOpen(true)}
         />
 
         {activeView === 'calculator' ? (
@@ -1053,7 +1208,13 @@ export default function App() {
                 ) : isYahooAsset ? (
                   <div className="text-xs text-slate-400 space-y-2">
                     <p className="leading-relaxed">
-                      ดึงข้อมูลราคา {isGoldAsset ? 'COMEX Gold Futures' : 'COMEX Silver Futures'} (<span className="text-slate-200 font-mono">{isGoldAsset ? 'GC=F' : 'SI=F'}</span>) อัตโนมัติจาก Yahoo Finance แบบ Real-time ไม่ต้องอัปโหลด CSV
+                      ดึงข้อมูลราคา{' '}
+                      {currentRegAsset?.providerSymbol === 'GC=F'
+                        ? 'COMEX Gold Futures'
+                        : currentRegAsset?.providerSymbol === 'SI=F'
+                        ? 'COMEX Silver Futures'
+                        : currentAsset.name}{' '}
+                      (<span className="text-slate-200 font-mono">{currentRegAsset?.providerSymbol || currentAsset.symbol}</span>) อัตโนมัติจาก Yahoo Finance แบบ Real-time ไม่ต้องอัปโหลด CSV
                     </p>
                     <div className="text-[11px] text-slate-400 bg-slate-950 p-2 rounded-lg border border-slate-800 flex items-center justify-between gap-2">
                       <span className="shrink-0">สถานะการเชื่อมต่อ:</span>
@@ -1252,6 +1413,16 @@ export default function App() {
           </div>
         </div>
       )}
+      {/* Shared Asset Registry Manager Modal */}
+      <AssetRegistryModal
+        isOpen={isRegistryModalOpen}
+        onClose={() => setIsRegistryModalOpen(false)}
+        registry={registry}
+        onAddAsset={handleAddRegistryAsset}
+        onToggleMode={handleToggleRegistryMode}
+        onRemoveAsset={handleRemoveRegistryAsset}
+        onResetDefaults={handleResetRegistryDefaults}
+      />
     </div>
   );
 }

@@ -1,97 +1,13 @@
 import { Asset, Candle, Timeframe } from '../types/trading';
+import { getAsset, loadRegistry, toMarketAsset } from './assetRegistry';
 
-export const INITIAL_ASSETS: Asset[] = [
-  {
-    symbol: 'BTC/USD',
-    name: 'Bitcoin',
-    thaiName: 'บิตคอยน์',
-    category: 'crypto',
-    decimals: 2,
-    unit: 'USD',
-    icon: '₿',
-  },
-  {
-    symbol: 'ETH/USD',
-    name: 'Ethereum',
-    thaiName: 'อีเธอเรียม',
-    category: 'crypto',
-    decimals: 2,
-    unit: 'USD',
-    icon: 'Ξ',
-  },
-  {
-    symbol: 'SOL/USD',
-    name: 'Solana',
-    thaiName: 'โซลานา',
-    category: 'crypto',
-    decimals: 2,
-    unit: 'USD',
-    icon: '◎',
-  },
-  {
-    symbol: 'SI1!',
-    name: 'Silver Futures',
-    thaiName: 'ซิลเวอร์ฟิวเจอร์ส (COMEX)',
-    category: 'commodity',
-    decimals: 3,
-    unit: 'USD/oz',
-    icon: '🥈',
-  },
-  {
-    symbol: 'XAU/USD',
-    name: 'Gold Spot',
-    thaiName: 'ทองคำสปอต',
-    category: 'commodity',
-    decimals: 2,
-    unit: 'USD/oz',
-    icon: '🥇',
-  },
-  {
-    symbol: 'XAG/USD',
-    name: 'Silver Spot',
-    thaiName: 'โลหะเงิน',
-    category: 'commodity',
-    decimals: 2,
-    unit: 'USD/oz',
-    icon: '🥈',
-  },
-  {
-    symbol: 'WTI/USD',
-    name: 'Crude Oil',
-    thaiName: 'น้ำมันดิบ WTI',
-    category: 'commodity',
-    decimals: 2,
-    unit: 'USD/bbl',
-    icon: '🛢️',
-  },
-  {
-    symbol: 'NVDA',
-    name: 'NVIDIA Corp',
-    thaiName: 'เอ็นวิเดีย',
-    category: 'stock',
-    decimals: 2,
-    unit: 'USD',
-    icon: '🟢',
-  },
-  {
-    symbol: 'TSLA',
-    name: 'Tesla Inc',
-    thaiName: 'เทสลา',
-    category: 'stock',
-    decimals: 2,
-    unit: 'USD',
-    icon: '⚡',
-  },
-  {
-    symbol: 'AAPL',
-    name: 'Apple Inc',
-    thaiName: 'แอปเปิ้ล',
-    category: 'stock',
-    decimals: 2,
-    unit: 'USD',
-    icon: '🍎',
-  },
-];
+export function getMode1Assets(): Asset[] {
+  return loadRegistry()
+    .filter(a => a.showInMode1)
+    .map(toMarketAsset);
+}
+
+export const INITIAL_ASSETS: Asset[] = getMode1Assets();
 
 export const TIMEFRAME_SECONDS: Record<Timeframe, number> = {
   '1m': 60,
@@ -188,13 +104,18 @@ export function aggregateTo4h(h1Candles: Candle[]): Candle[] {
   return h4Candles.sort((a, b) => a.time - b.time);
 }
 
-// Fetch real historical and current klines for Silver/USD from backend Yahoo Finance proxy
+// Fetch real historical and current klines from backend Yahoo Finance proxy
 export async function fetchSilverKlines(
   symbol: string,
-  timeframe: Timeframe
+  timeframe: Timeframe,
+  ticker?: string
 ): Promise<{ candles: Candle[]; source: string; price: number }> {
+  const resolvedTicker = ticker ?? getAsset(symbol)?.providerSymbol ?? '';
+  const tickerQuery = resolvedTicker ? `&ticker=${encodeURIComponent(resolvedTicker)}` : '';
   // Request timeframe directly from /api/klines (server supports 1w with 5y range directly)
-  const res = await fetch(`/api/klines?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}`);
+  const res = await fetch(
+    `/api/klines?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}${tickerQuery}`
+  );
   if (!res.ok) {
     throw new Error(`Failed to fetch Silver klines: ${res.statusText}`);
   }

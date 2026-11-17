@@ -13,6 +13,7 @@ import {
 } from '../services/entryTiers';
 import { aggregateDailyToWeekly } from '../services/marketData';
 import { fetchKrakenKlines } from '../services/krakenData';
+import { getAsset } from '../services/assetRegistry';
 import { EntryTierChart, PricePickMode, TierChartTimeframe } from './EntryTierChart';
 import {
   CheckCircle2,
@@ -34,6 +35,7 @@ interface EntryTiersPanelProps {
   symbol: string;
   thaiName: string;
   source: 'Kraken' | 'Yahoo';
+  providerSymbol?: string;
   decimals: number;
   activeTier: ActiveTierId;
   tierState: TierTradeState;
@@ -68,6 +70,7 @@ export const EntryTiersPanel: React.FC<EntryTiersPanelProps> = ({
   symbol,
   thaiName,
   source,
+  providerSymbol,
   decimals,
   activeTier,
   tierState,
@@ -121,7 +124,9 @@ export const EntryTiersPanel: React.FC<EntryTiersPanelProps> = ({
         if (source === 'Kraken') {
           fetched = await fetchKrakenKlines(reqSymbol, '1w');
         } else {
-          const res = await fetch(`/api/klines?symbol=${encodeURIComponent(reqSymbol)}&timeframe=1w`);
+          const ticker = providerSymbol || getAsset(reqSymbol)?.providerSymbol || '';
+          const tickerParam = ticker ? `&ticker=${encodeURIComponent(ticker)}` : '';
+          const res = await fetch(`/api/klines?symbol=${encodeURIComponent(reqSymbol)}&timeframe=1w${tickerParam}`);
           if (res.ok) {
             const data = await res.json();
             fetched = data.candles || [];
@@ -144,7 +149,7 @@ export const EntryTiersPanel: React.FC<EntryTiersPanelProps> = ({
     };
 
     loadWeekly();
-  }, [activeTier, chartTf, symbol, source, d1Candles]);
+  }, [activeTier, chartTf, symbol, source, providerSymbol, d1Candles]);
 
   const activeChartCandles = useMemo(() => {
     if (chartTf === '1w') return w1Candles.length > 0 ? w1Candles : aggregateDailyToWeekly(d1Candles);

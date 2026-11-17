@@ -1,4 +1,4 @@
-export type AssetCategory = 'crypto' | 'commodity' | 'stock';
+export type AssetCategory = 'crypto' | 'commodity' | 'stock' | 'other';
 
 export interface Asset {
   symbol: string;

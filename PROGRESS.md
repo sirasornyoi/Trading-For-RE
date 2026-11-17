@@ -63,6 +63,14 @@
 - [done] Updated Kraken WS effect in `App.tsx` so `isSnapshot` only updates `candles` and flushes `setAssets` once with the latest candle, calling `checkPriceAlerts` only on `update` messages
 - [done] Added TTL caching (`1m/5m`: 5s, `15m/1h`: 15s, `4h/1d/1w`: 60s), in-flight promise deduplication, and `stale: true` rate-limit fallback in `server.ts` `/api/kraken/ohlc`
 
+## Shared Asset Registry (จัดการสินทรัพย์ แบบที่ 1 + แบบที่ 2)
+- [done] Created `src/services/assetRegistry.ts` (`apextrade_asset_registry_v1`) with `RegistryAsset`, 10 defaults, `loadRegistry`/`saveRegistry`/`addAsset`/`removeAsset`/`resetRegistryToDefaults`/`purgeAssetLocalStorage`, and helpers (`getAsset`, `isKraken`, `isYahoo`, `hasMarketClose`, `toMarketAsset`)
+- [done] Updated `server.ts` `/api/klines` to accept & validate optional `ticker` query param (`/^[A-Za-z0-9.^=\-]{1,20}$/`)
+- [done] Updated `marketData.ts`, `breakoutScalp.ts`, and `entryTiers.ts` to source Mode 1/Mode 2 asset lists and market-close checks from `assetRegistry.ts` and forward `&ticker=` on Yahoo requests
+- [done] Built `src/components/AssetRegistryModal.tsx` with Mode 1/Mode 2 toggles, Kraken/Yahoo/CSV add form with `"ตรวจสอบ"` live price check + auto `decimals`/`scalpBuffer`, deletion confirmation + full purge, and `"คืนค่ารายการเริ่มต้น"` confirmation
+- [done] Wired `AssetSelector.tsx`, `EntryTiersPanel.tsx`, `BreakoutScalpView.tsx`, and `App.tsx` to shared `registry` state, Mode 2 default config/tier initialization, `&ticker=` forwarding, and `AssetRegistryModal`
+
 ## Known Issues
 - None
+
 

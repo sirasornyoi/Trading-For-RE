@@ -1,4 +1,5 @@
 import { Candle } from '../types/trading';
+import { RegistryAsset, loadRegistry } from './assetRegistry';
 
 export type ScalpTimeframe = '1m' | '5m';
 export type FundDirection = 'up' | 'down' | 'unclear';
@@ -30,19 +31,36 @@ export interface BreakoutScalpAssetConfig {
   alertEnabled: boolean;
 }
 
-export const SCALP_ASSETS: { symbol: string; name: string; thaiName: string; source: 'Kraken' | 'Yahoo'; decimals: number; defaultBuffer: number }[] = [
-  { symbol: 'XAU/USD', name: 'Gold Spot', thaiName: 'ทองคำสปอต (COMEX)', source: 'Yahoo', decimals: 2, defaultBuffer: 0.5 },
-  { symbol: 'XAG/USD', name: 'Silver Spot', thaiName: 'โลหะเงิน (COMEX)', source: 'Yahoo', decimals: 3, defaultBuffer: 0.05 },
-  { symbol: 'BTC/USD', name: 'Bitcoin', thaiName: 'บิตคอยน์', source: 'Kraken', decimals: 2, defaultBuffer: 5 },
-  { symbol: 'ETH/USD', name: 'Ethereum', thaiName: 'อีเธอเรียม', source: 'Kraken', decimals: 2, defaultBuffer: 0.5 },
-  { symbol: 'SOL/USD', name: 'Solana', thaiName: 'โซลานา', source: 'Kraken', decimals: 2, defaultBuffer: 0.1 },
-];
+export interface ScalpAssetMeta {
+  symbol: string;
+  name: string;
+  thaiName: string;
+  source: 'Kraken' | 'Yahoo';
+  providerSymbol: string;
+  decimals: number;
+  defaultBuffer: number;
+}
+
+export function getScalpAssets(registryList?: RegistryAsset[]): ScalpAssetMeta[] {
+  const list = registryList ?? loadRegistry();
+  return list
+    .filter(a => a.showInMode2 && (a.source === 'Kraken' || a.source === 'Yahoo'))
+    .map(a => ({
+      symbol: a.symbol,
+      name: a.name,
+      thaiName: a.thaiName,
+      source: a.source as 'Kraken' | 'Yahoo',
+      providerSymbol: a.providerSymbol,
+      decimals: a.decimals,
+      defaultBuffer: a.scalpBuffer,
+    }));
+}
 
 export const SCALP_STORAGE_KEY = 'apextrade_breakout_scalp_configs_v1';
 
-export function getDefaultScalpConfigs(): Record<string, BreakoutScalpAssetConfig> {
+export function getDefaultScalpConfigs(registryList?: RegistryAsset[]): Record<string, BreakoutScalpAssetConfig> {
   const configs: Record<string, BreakoutScalpAssetConfig> = {};
-  for (const asset of SCALP_ASSETS) {
+  for (const asset of getScalpAssets(registryList)) {
     configs[asset.symbol] = {
       symbol: asset.symbol,
       name: asset.name,
@@ -69,16 +87,16 @@ export function getDefaultScalpConfigs(): Record<string, BreakoutScalpAssetConfi
   return configs;
 }
 
-export function loadScalpConfigs(): Record<string, BreakoutScalpAssetConfig> {
+export function loadScalpConfigs(registryList?: RegistryAsset[]): Record<string, BreakoutScalpAssetConfig> {
   try {
     const raw = localStorage.getItem(SCALP_STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      const defaults = getDefaultScalpConfigs();
+      const defaults = getDefaultScalpConfigs(registryList);
       return { ...defaults, ...parsed };
     }
   } catch {}
-  return getDefaultScalpConfigs();
+  return getDefaultScalpConfigs(registryList);
 }
 
 export function saveScalpConfigs(configs: Record<string, BreakoutScalpAssetConfig>): void {

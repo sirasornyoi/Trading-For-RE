@@ -206,15 +206,21 @@ Format your entire response as a valid JSON object with an "items" array:
   }
 });
 
-// API endpoint for fetching Silver/USD candles and quotes from Yahoo Finance
+// API endpoint for fetching candles and quotes from Yahoo Finance
 app.get('/api/klines', async (req, res) => {
   try {
     const symbolParam = (req.query.symbol as string) || 'XAG/USD';
+    const tickerParam = typeof req.query.ticker === 'string' ? req.query.ticker.trim() : '';
     const timeframe = (req.query.timeframe as string) || '1d';
 
-    // Map app symbol to Yahoo Finance ticker
+    // Map app symbol or explicit Yahoo ticker
     let yahooSymbol: string;
-    if (symbolParam === 'XAG/USD' || symbolParam === 'SI1!' || symbolParam.toUpperCase().includes('SILVER')) {
+    if (tickerParam) {
+      if (!/^[A-Za-z0-9.^=\-]{1,20}$/.test(tickerParam)) {
+        return res.status(400).json({ error: 'รูปแบบ ticker ไม่ถูกต้อง' });
+      }
+      yahooSymbol = tickerParam;
+    } else if (symbolParam === 'XAG/USD' || symbolParam === 'SI1!' || symbolParam.toUpperCase().includes('SILVER')) {
       yahooSymbol = 'SI=F';
     } else if (symbolParam === 'XAU/USD' || symbolParam === 'GC1!') {
       yahooSymbol = 'GC=F';

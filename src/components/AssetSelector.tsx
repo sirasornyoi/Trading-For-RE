@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Asset, AssetCategory, PriceAlert } from '../types/trading';
-import { TrendingUp, TrendingDown, Bell, UploadCloud } from 'lucide-react';
+import { TrendingUp, TrendingDown, Bell, UploadCloud, Settings2 } from 'lucide-react';
 
 interface AssetSelectorProps {
   assets: Asset[];
@@ -8,6 +8,7 @@ interface AssetSelectorProps {
   onSelectSymbol: (symbol: string) => void;
   alerts: PriceAlert[];
   onUploadClick?: (symbol: string) => void;
+  onOpenManageAssets?: () => void;
 }
 
 export const AssetSelector: React.FC<AssetSelectorProps> = ({
@@ -16,6 +17,7 @@ export const AssetSelector: React.FC<AssetSelectorProps> = ({
   onSelectSymbol,
   alerts,
   onUploadClick,
+  onOpenManageAssets,
 }) => {
   const [filter, setFilter] = useState<AssetCategory | 'all'>('all');
 
@@ -51,8 +53,20 @@ export const AssetSelector: React.FC<AssetSelectorProps> = ({
             </button>
           ))}
         </div>
-        <div className="text-[11px] text-slate-400 hidden sm:block">
-          ข้อมูลจริงจาก Kraken & CSV Upload
+        <div className="flex items-center gap-2.5">
+          <span className="text-[11px] text-slate-400 hidden sm:block">
+            ข้อมูลจริงจาก Kraken & CSV Upload
+          </span>
+          {onOpenManageAssets && (
+            <button
+              type="button"
+              onClick={onOpenManageAssets}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-950 hover:bg-slate-800 border border-slate-700 text-xs font-semibold text-amber-300 transition-colors cursor-pointer"
+            >
+              <Settings2 className="w-3.5 h-3.5" />
+              <span>จัดการสินทรัพย์</span>
+            </button>
+          )}
         </div>
       </div>
 

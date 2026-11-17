@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
-  SCALP_ASSETS,
+  ScalpAssetMeta,
+  getScalpAssets,
+  getDefaultScalpConfigs,
   BreakoutScalpAssetConfig,
   loadScalpConfigs,
   saveScalpConfigs,
@@ -14,9 +16,11 @@ import {
   ActiveTierId,
   AssetTiersMap,
   TierTradeState,
+  createDefaultAssetTiers,
   loadEntryTiersState,
   saveEntryTiersState,
 } from '../services/entryTiers';
+import { RegistryAsset, loadRegistry } from '../services/assetRegistry';
 import { EntryTiersPanel } from './EntryTiersPanel';
 import { Candle, Timeframe } from '../types/trading';
 import { fetchKrakenKlines } from '../services/krakenData';
@@ -39,10 +43,13 @@ import {
   ArrowDownRight,
   Shield,
   FileCheck2,
+  Settings2,
 } from 'lucide-react';
 
 interface BreakoutScalpViewProps {
   onTriggerAlert?: (msg: string) => void;
+  registry?: RegistryAsset[];
+  onOpenManageAssets?: () => void;
 }
 
 interface ErrorBoundaryProps {
@@ -100,12 +107,23 @@ class BreakoutScalpErrorBoundary extends React.Component<ErrorBoundaryProps, Err
   }
 }
 
-const BreakoutScalpInnerView: React.FC<BreakoutScalpViewProps> = ({ onTriggerAlert }) => {
-  const [configs, setConfigs] = useState<Record<string, BreakoutScalpAssetConfig>>(() => loadScalpConfigs());
-  const [selectedSymbol, setSelectedSymbol] = useState<string>('BTC/USD');
+const BreakoutScalpInnerView: React.FC<BreakoutScalpViewProps> = ({
+  onTriggerAlert,
+  registry,
+  onOpenManageAssets,
+}) => {
+  const scalpAssets = useMemo<ScalpAssetMeta[]>(() => getScalpAssets(registry), [registry]);
+  const defaultConfigsMap = useMemo(() => getDefaultScalpConfigs(registry), [registry]);
+
+  const [configs, setConfigs] = useState<Record<string, BreakoutScalpAssetConfig>>(() =>
+    loadScalpConfigs(registry)
+  );
+  const [selectedSymbol, setSelectedSymbol] = useState<string>(
+    () => getScalpAssets(registry)[0]?.symbol || 'BTC/USD'
+  );
   const [selectedTier, setSelectedTier] = useState<EntryTierId>(0);
   const [entryTiersState, setEntryTiersState] = useState<AssetTiersMap>(() =>
-    loadEntryTiersState(SCALP_ASSETS.map(a => a.symbol))
+    loadEntryTiersState(getScalpAssets(registry).map(a => a.symbol))
   );
   const [activeTab, setActiveTab] = useState<ScalpSide>('bull');
 
@@ -119,7 +137,75 @@ const BreakoutScalpInnerView: React.FC<BreakoutScalpViewProps> = ({ onTriggerAle
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<number>(Date.now());
 
-  const currentConfig = configs[selectedSymbol] || configs['BTC/USD'];
+  const firstScalpSymbol = scalpAssets[0]?.symbol || 'BTC/USD';
+  const currentConfig =
+    configs[selectedSymbol] ||
+    defaultConfigsMap[selectedSymbol] ||
+    configs[firstScalpSymbol] ||
+    defaultConfigsMap[firstScalpSymbol];
+  const currentAssetMeta =
+    scalpAssets.find(a => a.symbol === selectedSymbol) || scalpAssets[0];
+
+  // Sync configs, entryTiersState, and selectedSymbol when registry changes
+  useEffect(() => {
+    const allRegistrySymbols = new Set((registry ?? loadRegistry()).map(a => a.symbol));
+    const scalpSymbols = scalpAssets.map(a => a.symbol);
+
+    setConfigs(prev => {
+      let changed = false;
+      const next: Record<string, BreakoutScalpAssetConfig> = {};
+      for (const key of Object.keys(prev)) {
+        if (allRegistrySymbols.has(key)) {
+          next[key] = prev[key];
+        } else {
+          changed = true;
+        }
+      }
+      for (const sym of scalpSymbols) {
+        if (!next[sym] && defaultConfigsMap[sym]) {
+          next[sym] = defaultConfigsMap[sym];
+          changed = true;
+        }
+      }
+      if (changed) saveScalpConfigs(next);
+      return changed ? next : prev;
+    });
+
+    setEntryTiersState(prev => {
+      let changed = false;
+      const next: AssetTiersMap = {};
+      for (const key of Object.keys(prev)) {
+        if (allRegistrySymbols.has(key)) {
+          next[key] = prev[key];
+        } else {
+          changed = true;
+        }
+      }
+      for (const sym of scalpSymbols) {
+        if (!next[sym]) {
+          next[sym] = createDefaultAssetTiers();
+          changed = true;
+        }
+      }
+      if (changed) saveEntryTiersState(next);
+      return changed ? next : prev;
+    });
+
+    if (scalpSymbols.length > 0 && !scalpSymbols.includes(selectedSymbol)) {
+      const nextSym = scalpSymbols[0];
+      setLtfCandles([]);
+      setH1Candles([]);
+      setH4Candles([]);
+      setD1Candles([]);
+      setIsLoading(true);
+      setFetchError(null);
+      activeSelectionRef.current = {
+        symbol: nextSym,
+        timeframe: configs[nextSym]?.timeframe || '5m',
+      };
+      setSelectedSymbol(nextSym);
+    }
+  }, [registry, scalpAssets, defaultConfigsMap, selectedSymbol, configs]);
 
   // Ref to track active request selection (symbol and timeframe) to drop stale async responses
   const activeSelectionRef = useRef<{ symbol: string; timeframe: '1m' | '5m' }>({
@@ -238,7 +324,7 @@ const BreakoutScalpInnerView: React.FC<BreakoutScalpViewProps> = ({ onTriggerAle
 
   // Fetch candles for an asset
   const fetchCandlesForAsset = useCallback(async (symbol: string, tf: '1m' | '5m') => {
-    const assetMeta = SCALP_ASSETS.find(a => a.symbol === symbol);
+    const assetMeta = scalpAssets.find(a => a.symbol === symbol) || getScalpAssets().find(a => a.symbol === symbol);
     if (!assetMeta) return;
 
     try {
@@ -270,10 +356,13 @@ const BreakoutScalpInnerView: React.FC<BreakoutScalpViewProps> = ({ onTriggerAle
         setD1Candles(d1 || []);
         setLastRefreshedAt(Date.now());
       } else {
+        const tickerParam = assetMeta.providerSymbol
+          ? `&ticker=${encodeURIComponent(assetMeta.providerSymbol)}`
+          : '';
         const [ltfRes, h1Res, d1Res] = await Promise.all([
-          fetch(`/api/klines?symbol=${encodeURIComponent(symbol)}&timeframe=${tf}`),
-          fetch(`/api/klines?symbol=${encodeURIComponent(symbol)}&timeframe=1h`),
-          fetch(`/api/klines?symbol=${encodeURIComponent(symbol)}&timeframe=1d`),
+          fetch(`/api/klines?symbol=${encodeURIComponent(symbol)}&timeframe=${tf}${tickerParam}`),
+          fetch(`/api/klines?symbol=${encodeURIComponent(symbol)}&timeframe=1h${tickerParam}`),
+          fetch(`/api/klines?symbol=${encodeURIComponent(symbol)}&timeframe=1d${tickerParam}`),
         ]);
 
         if (
@@ -326,7 +415,7 @@ const BreakoutScalpInnerView: React.FC<BreakoutScalpViewProps> = ({ onTriggerAle
         setFetchError(`เกิดข้อผิดพลาดในการโหลดข้อมูล ${symbol}: ${err?.message || 'Network error'}`);
       }
     }
-  }, []);
+  }, [scalpAssets]);
 
   // Initial fetch on asset or TF change
   useEffect(() => {
@@ -377,7 +466,9 @@ const BreakoutScalpInnerView: React.FC<BreakoutScalpViewProps> = ({ onTriggerAle
               }
             }
           } else {
-            const res = await fetch(`/api/klines?symbol=${encodeURIComponent(reqSymbol)}&timeframe=${reqTf}`);
+            const ticker = currentAssetMeta?.providerSymbol || '';
+            const tickerParam = ticker ? `&ticker=${encodeURIComponent(ticker)}` : '';
+            const res = await fetch(`/api/klines?symbol=${encodeURIComponent(reqSymbol)}&timeframe=${reqTf}${tickerParam}`);
             if (
               activeSelectionRef.current.symbol !== reqSymbol ||
               activeSelectionRef.current.timeframe !== reqTf
@@ -416,7 +507,7 @@ const BreakoutScalpInnerView: React.FC<BreakoutScalpViewProps> = ({ onTriggerAle
       clearInterval(ltfTimer);
       clearInterval(htfTimer);
     };
-  }, [selectedSymbol, currentConfig.source, currentConfig.timeframe, fetchCandlesForAsset]);
+  }, [selectedSymbol, currentConfig.source, currentConfig.timeframe, currentAssetMeta?.providerSymbol, fetchCandlesForAsset]);
 
   // Closed candles calculation
   const tfSec = currentConfig.timeframe === '1m' ? 60 : 300;
@@ -564,7 +655,7 @@ const BreakoutScalpInnerView: React.FC<BreakoutScalpViewProps> = ({ onTriggerAle
     <div className="flex flex-col gap-4 w-full pb-16 select-none font-sans text-slate-100">
       {/* Asset Switcher Tabs */}
       <div className="flex flex-wrap items-center gap-2 bg-slate-900 border border-slate-800 p-2 rounded-xl">
-        {SCALP_ASSETS.map((asset) => {
+        {scalpAssets.map((asset) => {
           const isSelected = asset.symbol === selectedSymbol;
           const conf = configs[asset.symbol];
           return (
@@ -589,6 +680,17 @@ const BreakoutScalpInnerView: React.FC<BreakoutScalpViewProps> = ({ onTriggerAle
         })}
 
         <div className="ml-auto flex items-center gap-2 text-xs text-slate-400 font-mono">
+          {onOpenManageAssets && (
+            <button
+              type="button"
+              onClick={onOpenManageAssets}
+              className="flex items-center gap-1.5 px-2.5 py-1 bg-slate-950 hover:bg-slate-800 border border-slate-700 rounded-lg text-amber-300 font-sans font-semibold cursor-pointer"
+              title="เพิ่ม/ลบ หรือตั้งค่าสินทรัพย์"
+            >
+              <Settings2 className="w-3.5 h-3.5" />
+              <span>จัดการสินทรัพย์</span>
+            </button>
+          )}
           <button
             onClick={() => {
               setIsLoading(true);
@@ -671,9 +773,13 @@ const BreakoutScalpInnerView: React.FC<BreakoutScalpViewProps> = ({ onTriggerAle
           symbol={selectedSymbol}
           thaiName={currentConfig.thaiName}
           source={currentConfig.source}
+          providerSymbol={currentAssetMeta?.providerSymbol}
           decimals={currentConfig.decimals}
           activeTier={selectedTier as ActiveTierId}
-          tierState={entryTiersState[selectedSymbol][selectedTier as ActiveTierId]}
+          tierState={
+            entryTiersState[selectedSymbol]?.[selectedTier as ActiveTierId] ||
+            createDefaultAssetTiers()[selectedTier as ActiveTierId]
+          }
           latestPrice={lastClosedCandle ? lastClosedCandle.close : null}
           h1Candles={h1Candles}
           h4Candles={h4Candles}

@@ -1,5 +1,6 @@
 import { Candle } from '../types/trading';
 import { calculateRSIValues, filterClosedCandles } from './breakoutScalp';
+import { hasMarketClose } from './assetRegistry';
 
 export type EntryTierId = 0 | 1 | 2 | 3;
 export type ActiveTierId = 1 | 2 | 3;
@@ -355,7 +356,7 @@ function getMsUntilNextMarketClose(nowMs: number, marketCloseTime: string): numb
 }
 
 export function hasMarketCloseSession(symbol: string): boolean {
-  return symbol === 'XAU/USD' || symbol === 'XAG/USD';
+  return hasMarketClose(symbol);
 }
 
 export function evaluateTierTimeStop(
