@@ -168,6 +168,7 @@ export const EntryTiersPanel: React.FC<EntryTiersPanelProps> = ({
       entryPrice: null,
       stopPrice: null,
       takeProfitPrice: null,
+      tp1Price: null,
     }));
   };
 
@@ -407,6 +408,7 @@ export const EntryTiersPanel: React.FC<EntryTiersPanelProps> = ({
             entryPrice={tierState.entryPrice}
             stopPrice={tierState.stopPrice}
             takeProfitPrice={tierState.takeProfitPrice}
+            tp1Price={activeTier === 2 ? tierState.tp1Price : null}
             rrEval={rrEval}
             dailyRsi={dailyRsi}
             onPickPrice={handlePickPriceFromChart}
@@ -620,17 +622,30 @@ export const EntryTiersPanel: React.FC<EntryTiersPanelProps> = ({
               {activeTier === 2 && (
                 <div>
                   <label className="block text-slate-400 font-semibold mb-1">TP1 (ดุลพินิจ)</label>
-                  <input
-                    type="number"
-                    step="any"
-                    value={tierState.tp1Price ?? ''}
-                    placeholder="แบ่งปิด (ถ้ามี)"
-                    onChange={e => {
-                      const val = e.target.value === '' ? null : Number(e.target.value);
-                      onUpdateTierState(prev => ({ ...prev, tp1Price: val }));
-                    }}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 font-mono text-white text-xs focus:outline-none focus:border-cyan-500"
-                  />
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="number"
+                      step="any"
+                      value={tierState.tp1Price ?? ''}
+                      placeholder="แบ่งปิด (ถ้ามี)"
+                      onChange={e => {
+                        const val = e.target.value === '' ? null : Number(e.target.value);
+                        onUpdateTierState(prev => ({ ...prev, tp1Price: val }));
+                      }}
+                      className="w-full min-w-0 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 font-mono text-white text-xs focus:outline-none focus:border-cyan-500"
+                    />
+                    {tierState.tp1Price !== null && (
+                      <button
+                        type="button"
+                        onClick={() => onUpdateTierState(prev => ({ ...prev, tp1Price: null }))}
+                        className="p-1.5 rounded-lg bg-slate-950 border border-slate-800 text-slate-400 hover:text-rose-400 hover:border-rose-900/70 transition-colors cursor-pointer shrink-0"
+                        title="ลบราคา TP1"
+                        aria-label="ลบราคา TP1"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
                 </div>
               )}
             </div>

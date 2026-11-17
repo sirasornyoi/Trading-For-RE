@@ -22,6 +22,7 @@ import {
   SeriesMarker,
   MouseEventParams,
   Time,
+  LogicalRange,
 } from 'lightweight-charts';
 import { Candle } from '../types/trading';
 import { calculateEMA, calculateRSI } from '../services/marketData';
@@ -81,6 +82,7 @@ interface EntryTierChartProps {
   entryPrice: number | null;
   stopPrice: number | null;
   takeProfitPrice: number | null;
+  tp1Price?: number | null;
   rrEval: TierRrEvaluation;
   dailyRsi: DailyRsiEvaluation;
   onPickPrice: (mode: Exclude<PricePickMode, null>, price: number) => void;
@@ -127,6 +129,7 @@ export const EntryTierChart: React.FC<EntryTierChartProps> = ({
   entryPrice,
   stopPrice,
   takeProfitPrice,
+  tp1Price = null,
   rrEval,
   dailyRsi,
   onPickPrice,
@@ -156,8 +159,10 @@ export const EntryTierChart: React.FC<EntryTierChartProps> = ({
   const entryLineRef = useRef<IPriceLine | null>(null);
   const slLineRef = useRef<IPriceLine | null>(null);
   const tpLineRef = useRef<IPriceLine | null>(null);
+  const tp1LineRef = useRef<IPriceLine | null>(null);
 
   const [indicators, setIndicators] = useState<EntryTierChartIndicators>(() => loadChartIndicators());
+  const [chartVersion, setChartVersion] = useState<number>(0);
   const [pickMode, setPickMode] = useState<PricePickMode>(null);
   const [hoveredData, setHoveredData] = useState<LegendEntry | null>(null);
   const [paneLayout, setPaneLayout] = useState<{ volTop: number; volHeight: number; rsiTop: number; rsiHeight: number }>({
@@ -166,6 +171,12 @@ export const EntryTierChart: React.FC<EntryTierChartProps> = ({
     rsiTop: 0,
     rsiHeight: 0,
   });
+
+  const indicatorsRef = useRef<EntryTierChartIndicators>(indicators);
+  indicatorsRef.current = indicators;
+
+  const lastFitKeyRef = useRef<string | null>(null);
+  const savedLogicalRangeRef = useRef<LogicalRange | null>(null);
 
   const pickModeRef = useRef<PricePickMode>(null);
   pickModeRef.current = pickMode;
@@ -469,13 +480,14 @@ export const EntryTierChart: React.FC<EntryTierChartProps> = ({
     // Swing markers plugin on candlestick series
     const markersPlugin = createSeriesMarkers(candleSeries, []);
 
-    // Pane 0: EMA 20 / 50 / 100 / 200
-    const createEmaSeries = (color: string) =>
+    // Pane 0: EMA 20 / 50 / 100 / 200 (respect current indicatorsRef visibility on creation)
+    const createEmaSeries = (color: string, visible: boolean) =>
       chart.addSeries(
         LineSeries,
         {
           color,
           lineWidth: 1,
+          visible,
           priceLineVisible: false,
           lastValueVisible: false,
           crosshairMarkerVisible: false,
@@ -483,10 +495,10 @@ export const EntryTierChart: React.FC<EntryTierChartProps> = ({
         0
       );
 
-    const ema20Series = createEmaSeries('#f59e0b');
-    const ema50Series = createEmaSeries('#a855f7');
-    const ema100Series = createEmaSeries('#22d3ee');
-    const ema200Series = createEmaSeries('#ec4899');
+    const ema20Series = createEmaSeries('#f59e0b', indicatorsRef.current.ema20);
+    const ema50Series = createEmaSeries('#a855f7', indicatorsRef.current.ema50);
+    const ema100Series = createEmaSeries('#22d3ee', indicatorsRef.current.ema100);
+    const ema200Series = createEmaSeries('#ec4899', indicatorsRef.current.ema200);
 
     // Pane 1 (optional): Volume + Volume MA20
     let volumeSeries: ISeriesApi<'Histogram'> | null = null;
@@ -649,9 +661,14 @@ export const EntryTierChart: React.FC<EntryTierChartProps> = ({
       ro.observe(containerRef.current);
     }
 
+    setChartVersion(v => v + 1);
+
     return () => {
       cancelAnimationFrame(rafId);
       ro?.disconnect();
+      try {
+        savedLogicalRangeRef.current = chart.timeScale().getVisibleLogicalRange();
+      } catch {}
       chart.unsubscribeCrosshairMove(crosshairHandler);
       chart.unsubscribeClick(clickHandler);
       markersPlugin.detach();
@@ -659,6 +676,7 @@ export const EntryTierChart: React.FC<EntryTierChartProps> = ({
       entryLineRef.current = null;
       slLineRef.current = null;
       tpLineRef.current = null;
+      tp1LineRef.current = null;
       chart.remove();
       chartRef.current = null;
       candleSeriesRef.current = null;
@@ -744,25 +762,35 @@ export const EntryTierChart: React.FC<EntryTierChartProps> = ({
       rsiSeriesRef.current.setData(toLineData(processedData.rsi));
     }
 
-    chartRef.current?.timeScale().fitContent();
-    requestAnimationFrame(updatePaneLayout);
-  }, [processedData, symbol, timeframe, indicators.volume, indicators.rsi]);
+    // Preserve zoom/pan on auto-refresh & pane toggles; fitContent only on first load, symbol change, or TF change
+    const fitKey = `${symbol}|${timeframe}`;
+    if (lastFitKeyRef.current !== fitKey) {
+      chartRef.current?.timeScale().fitContent();
+      lastFitKeyRef.current = fitKey;
+      savedLogicalRangeRef.current = null;
+    } else if (savedLogicalRangeRef.current !== null) {
+      chartRef.current?.timeScale().setVisibleLogicalRange(savedLogicalRangeRef.current);
+      savedLogicalRangeRef.current = null;
+    }
 
-  // Toggle EMA visibility without recreating chart
+    requestAnimationFrame(updatePaneLayout);
+  }, [processedData, symbol, timeframe, chartVersion]);
+
+  // Toggle EMA visibility without recreating chart (also re-apply after chart rebuild)
   useEffect(() => {
     ema20SeriesRef.current?.applyOptions({ visible: indicators.ema20 });
     ema50SeriesRef.current?.applyOptions({ visible: indicators.ema50 });
     ema100SeriesRef.current?.applyOptions({ visible: indicators.ema100 });
     ema200SeriesRef.current?.applyOptions({ visible: indicators.ema200 });
-  }, [indicators.ema20, indicators.ema50, indicators.ema100, indicators.ema200]);
+  }, [indicators.ema20, indicators.ema50, indicators.ema100, indicators.ema200, chartVersion]);
 
-  // Toggle Swing High / Swing Low markers
+  // Toggle Swing High / Swing Low markers (also re-apply after chart rebuild)
   useEffect(() => {
     if (!markersPluginRef.current) return;
     markersPluginRef.current.setMarkers(indicators.swings ? processedData.swingMarkers : []);
-  }, [indicators.swings, processedData.swingMarkers]);
+  }, [indicators.swings, processedData.swingMarkers, chartVersion]);
 
-  // Sync Entry / SL / TP horizontal price lines and R/R shaded zones
+  // Sync Entry / SL / TP / TP1 horizontal price lines and R/R shaded zones
   useEffect(() => {
     const series = candleSeriesRef.current;
     if (!series) return;
@@ -779,10 +807,12 @@ export const EntryTierChart: React.FC<EntryTierChartProps> = ({
     clearLine(entryLineRef);
     clearLine(slLineRef);
     clearLine(tpLineRef);
+    clearLine(tp1LineRef);
 
     const hasEntry = entryPrice !== null && Number.isFinite(entryPrice) && entryPrice > 0;
     const hasSl = stopPrice !== null && Number.isFinite(stopPrice) && stopPrice > 0;
     const hasTp = takeProfitPrice !== null && Number.isFinite(takeProfitPrice) && takeProfitPrice > 0;
+    const hasTp1 = tp1Price !== null && Number.isFinite(tp1Price) && tp1Price > 0;
 
     const formatSignedDistance = (target: number, base: number): string => {
       const diff = target - base;
@@ -833,6 +863,21 @@ export const EntryTierChart: React.FC<EntryTierChartProps> = ({
       });
     }
 
+    if (hasTp1 && tp1Price !== null) {
+      const tp1Title =
+        hasEntry && entryPrice !== null
+          ? `TP1 ${formatSignedDistance(tp1Price, entryPrice)}`
+          : `TP1 ${tp1Price.toFixed(decimals)}`;
+      tp1LineRef.current = series.createPriceLine({
+        price: tp1Price,
+        color: '#86efac',
+        lineWidth: 2,
+        lineStyle: LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: tp1Title,
+      });
+    }
+
     // R/R shaded bands between Entry-SL (red) and Entry-TP (green)
     if (rrSlZoneSeriesRef.current) {
       if (indicators.rrZone && hasEntry && hasSl && entryPrice !== null && stopPrice !== null && processedData.items.length > 0) {
@@ -861,7 +906,7 @@ export const EntryTierChart: React.FC<EntryTierChartProps> = ({
         rrTpZoneSeriesRef.current.setData([]);
       }
     }
-  }, [entryPrice, stopPrice, takeProfitPrice, decimals, processedData, indicators.rrZone, indicators.volume, indicators.rsi]);
+  }, [entryPrice, stopPrice, takeProfitPrice, tp1Price, decimals, processedData, indicators.rrZone, chartVersion]);
 
   const activeLegend = hoveredData || latestEntry;
   const formatPrice = (p: number) => p.toFixed(decimals);
@@ -951,7 +996,7 @@ export const EntryTierChart: React.FC<EntryTierChartProps> = ({
             <span>ตั้ง TP</span>
           </button>
 
-          {(entryPrice !== null || stopPrice !== null || takeProfitPrice !== null) && (
+          {(entryPrice !== null || stopPrice !== null || takeProfitPrice !== null || tp1Price !== null) && (
             <button
               type="button"
               onClick={() => {

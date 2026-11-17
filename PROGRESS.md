@@ -21,6 +21,7 @@
 - [done] Rendered missing mandatory topics in top gray box ("หัวข้อบังคับที่ยังหาไม่เจอ") outside BULL/BEAR columns and thesis boxes
 - [done] Added 'unclear' fallback to thesis_relation and added third box "ยังไม่ชัดว่าหนุนหรือขัด"
 - [done] Updated `TradingChart.tsx` S/R controls: added toolbar "ลบเส้น S/R" button, panel "ลบเส้น" button, Trendline tooltip clarification, auto-clear S/R on symbol switch (preserved on timeframe switch), and `Esc` to exit S/R drawing mode
+- [done] Updated Bullish Engulfing indicators in `TradingChart.tsx` to render as compact dots by default and expand the full `"Buyer จริง"` / `"อาจเป็น short covering"` label only on candle hover
 
 ## Mode 2 · Breakout Scalp (แบบที่ 2) Refinements
 - [done] Added directional extreme detection (extremeUp vs extremeDown) and signed EMA50 H4 distance in Step 0
@@ -47,6 +48,7 @@
 - [done] Added `src/components/EntryTierChart.tsx` with Daily/H4/H1/(Weekly in Tier 3) candlestick chart, `[ตั้ง Entry]`/`[ตั้ง SL]`/`[ตั้ง TP]` click-to-set via `coordinateToPrice`, Esc/cancel mode, horizontal `createPriceLine` overlays, and `decimals` rounding synced with inputs and `evaluateTierRR`
 - [done] Enhanced `EntryTierChart.tsx` with EMA20/50/100/200 (`calculateEMA`), Volume + MA20 with zero-volume notice, RSI 14 pane (`calculateRSI`) with 30/70 dashed lines, <=35/>=65 shading & Daily RSI header, 3-bar Swing High/Low markers, R/R shaded zones & distance labels, expanded legend, and separate localStorage indicator persistence
 - [done] Added per-field `✕` clear buttons next to Entry/SL/TP inputs in `EntryTiersPanel.tsx` and toolbar `"ลบเส้นทั้งหมด"` button in `EntryTierChart.tsx` (scoped strictly to the active tier)
+- [done] Fixed `EntryTierChart.tsx` EMA visibility & Swing markers after chart rebuild (`indicatorsRef` + `chartVersion`), preserved zoom/pan across 5m refreshes and Volume/RSI pane toggles (`getVisibleLogicalRange`/`setVisibleLogicalRange`), and added dashed light-green `TP1` line + `✕` clear button (included in `"ลบเส้นทั้งหมด"`)
 
 ## Known Issues
 - None

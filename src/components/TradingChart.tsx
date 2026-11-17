@@ -552,6 +552,8 @@ export const TradingChart: React.FC<TradingChartProps> = ({
 
     // Draw Main Price Series: Candles or Line
     if (chartType === 'candles') {
+      let hoveredEngulfingBadge: { centerX: number; dotY: number; isConfirmed: boolean; text: string } | null = null;
+
       for (let gIdx = startIdx; gIdx < endIdx; gIdx++) {
         const c = candles[gIdx];
         const slot = gIdx - startGlobalIdx;
@@ -577,7 +579,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
         ctx.fillStyle = candleColor;
         ctx.fillRect(x, bodyTop, candleWidth, bodyHeight);
 
-        // Requirement 4: Bullish engulfing detector
+        // Requirement 4: Bullish engulfing detector (compact dot, full label on hover)
         if (showBullishEngulfing && gIdx > 0) {
           const prev = candles[gIdx - 1];
           const isPrevRed = prev.close < prev.open;
@@ -586,32 +588,55 @@ export const TradingChart: React.FC<TradingChartProps> = ({
 
           if (isEngulfingBody) {
             const isConfirmed = c.close > prev.high && c.volume > prev.volume;
-            const badgeY = priceToY(c.low) + 6 * dpr;
+            const dotY = priceToY(c.low) + 6 * dpr;
+            const isHovered = crosshair?.candle?.time === c.time;
 
             ctx.save();
-            ctx.font = `bold ${8.5 * dpr}px 'Plus Jakarta Sans', sans-serif`;
-            const text = isConfirmed ? 'Buyer จริง' : 'อาจเป็น short covering';
-            const textWidth = ctx.measureText(text).width;
-            const badgeW = textWidth + 8 * dpr;
-            const badgeH = 14 * dpr;
-            const badgeX = centerX - badgeW / 2;
-
-            ctx.fillStyle = isConfirmed ? 'rgba(16, 185, 129, 0.95)' : 'rgba(245, 158, 11, 0.95)';
-            if (ctx.roundRect) {
-              ctx.beginPath();
-              ctx.roundRect(badgeX, badgeY, badgeW, badgeH, 3 * dpr);
-              ctx.fill();
-            } else {
-              ctx.fillRect(badgeX, badgeY, badgeW, badgeH);
-            }
-
-            ctx.fillStyle = isConfirmed ? '#022c22' : '#451a03';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(text, centerX, badgeY + badgeH / 2);
+            ctx.beginPath();
+            ctx.arc(centerX, dotY, (isHovered ? 4 : 2.8) * dpr, 0, Math.PI * 2);
+            ctx.fillStyle = isConfirmed ? '#10b981' : '#f59e0b';
+            ctx.fill();
+            ctx.lineWidth = 1 * dpr;
+            ctx.strokeStyle = '#090d16';
+            ctx.stroke();
             ctx.restore();
+
+            if (isHovered) {
+              hoveredEngulfingBadge = {
+                centerX,
+                dotY,
+                isConfirmed,
+                text: isConfirmed ? 'Buyer จริง' : 'อาจเป็น short covering',
+              };
+            }
           }
         }
+      }
+
+      if (hoveredEngulfingBadge) {
+        const { centerX, dotY, isConfirmed, text } = hoveredEngulfingBadge;
+        ctx.save();
+        ctx.font = `bold ${9 * dpr}px 'Plus Jakarta Sans', sans-serif`;
+        const textWidth = ctx.measureText(text).width;
+        const badgeW = textWidth + 10 * dpr;
+        const badgeH = 16 * dpr;
+        const badgeX = Math.max(4 * dpr, Math.min(chartWidth - badgeW - 4 * dpr, centerX - badgeW / 2));
+        const badgeY = Math.min(chartHeight - badgeH - 4 * dpr, dotY + 6 * dpr);
+
+        ctx.fillStyle = isConfirmed ? 'rgba(16, 185, 129, 0.95)' : 'rgba(245, 158, 11, 0.95)';
+        if (ctx.roundRect) {
+          ctx.beginPath();
+          ctx.roundRect(badgeX, badgeY, badgeW, badgeH, 3 * dpr);
+          ctx.fill();
+        } else {
+          ctx.fillRect(badgeX, badgeY, badgeW, badgeH);
+        }
+
+        ctx.fillStyle = isConfirmed ? '#022c22' : '#451a03';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(text, badgeX + badgeW / 2, badgeY + badgeH / 2);
+        ctx.restore();
       }
     } else {
       // Area / Line Chart mode
