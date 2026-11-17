@@ -11,7 +11,7 @@ export interface BreakoutScalpAssetConfig {
   symbol: string;
   name: string;
   thaiName: string;
-  source: 'Binance' | 'Yahoo';
+  source: 'Kraken' | 'Yahoo';
   decimals: number;
   timeframe: ScalpTimeframe;
   levelHigh: number | null;
@@ -30,12 +30,12 @@ export interface BreakoutScalpAssetConfig {
   alertEnabled: boolean;
 }
 
-export const SCALP_ASSETS: { symbol: string; name: string; thaiName: string; source: 'Binance' | 'Yahoo'; decimals: number; defaultBuffer: number }[] = [
+export const SCALP_ASSETS: { symbol: string; name: string; thaiName: string; source: 'Kraken' | 'Yahoo'; decimals: number; defaultBuffer: number }[] = [
   { symbol: 'XAU/USD', name: 'Gold Spot', thaiName: 'ทองคำสปอต (COMEX)', source: 'Yahoo', decimals: 2, defaultBuffer: 0.5 },
   { symbol: 'XAG/USD', name: 'Silver Spot', thaiName: 'โลหะเงิน (COMEX)', source: 'Yahoo', decimals: 3, defaultBuffer: 0.05 },
-  { symbol: 'BTC/USDT', name: 'Bitcoin', thaiName: 'บิตคอยน์', source: 'Binance', decimals: 2, defaultBuffer: 5 },
-  { symbol: 'ETH/USDT', name: 'Ethereum', thaiName: 'อีเธอเรียม', source: 'Binance', decimals: 2, defaultBuffer: 0.5 },
-  { symbol: 'SOL/USDT', name: 'Solana', thaiName: 'โซลานา', source: 'Binance', decimals: 2, defaultBuffer: 0.1 },
+  { symbol: 'BTC/USD', name: 'Bitcoin', thaiName: 'บิตคอยน์', source: 'Kraken', decimals: 2, defaultBuffer: 5 },
+  { symbol: 'ETH/USD', name: 'Ethereum', thaiName: 'อีเธอเรียม', source: 'Kraken', decimals: 2, defaultBuffer: 0.5 },
+  { symbol: 'SOL/USD', name: 'Solana', thaiName: 'โซลานา', source: 'Kraken', decimals: 2, defaultBuffer: 0.1 },
 ];
 
 export const SCALP_STORAGE_KEY = 'apextrade_breakout_scalp_configs_v1';

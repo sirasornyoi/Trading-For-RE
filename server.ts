@@ -313,6 +313,109 @@ app.get('/api/klines', async (req, res) => {
   }
 });
 
+const KRAKEN_INTERVAL_MINUTES: Record<string, number> = {
+  '1m': 1,
+  '5m': 5,
+  '15m': 15,
+  '1h': 60,
+  '4h': 240,
+  '1d': 1440,
+  '1w': 10080,
+};
+
+function toKrakenPair(symbol: string): string {
+  const clean = symbol.trim().toUpperCase().replace(/\//g, '');
+  if (clean.startsWith('BTC')) {
+    return `XBT${clean.slice(3)}`;
+  }
+  return clean;
+}
+
+// API endpoint for fetching crypto OHLC candles from Kraken public API
+app.get('/api/kraken/ohlc', async (req, res) => {
+  try {
+    const symbolParam = ((req.query.symbol as string) || 'BTC/USD').trim();
+    const timeframe = ((req.query.timeframe as string) || '1h').trim();
+
+    const interval = KRAKEN_INTERVAL_MINUTES[timeframe];
+    if (!interval) {
+      return res.status(400).json({ error: `Unsupported timeframe: ${timeframe}` });
+    }
+
+    const pair = toKrakenPair(symbolParam);
+    const url = `https://api.kraken.com/0/public/OHLC?pair=${encodeURIComponent(pair)}&interval=${interval}`;
+    const response = await fetch(url, {
+      headers: {
+        'Accept': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      return res.status(response.status).json({
+        error: `Kraken API error: ${response.statusText} (${response.status})`,
+      });
+    }
+
+    const data = await response.json();
+    if (Array.isArray(data?.error) && data.error.length > 0) {
+      return res.status(502).json({ error: data.error.join(', ') });
+    }
+
+    const result = data?.result || {};
+    const pairKey = Object.keys(result).find(k => k !== 'last');
+    const rows: unknown[] = pairKey && Array.isArray(result[pairKey]) ? result[pairKey] : [];
+
+    const candles: {
+      time: number;
+      open: number;
+      high: number;
+      low: number;
+      close: number;
+      volume: number;
+    }[] = [];
+
+    for (const row of rows) {
+      if (!Array.isArray(row) || row.length < 7) continue;
+      const time = Number(row[0]);
+      const open = parseFloat(String(row[1]));
+      const high = parseFloat(String(row[2]));
+      const low = parseFloat(String(row[3]));
+      const close = parseFloat(String(row[4]));
+      const volume = parseFloat(String(row[6]));
+
+      if (
+        !isNaN(time) &&
+        !isNaN(open) &&
+        !isNaN(high) &&
+        !isNaN(low) &&
+        !isNaN(close)
+      ) {
+        candles.push({
+          time,
+          open,
+          high,
+          low,
+          close,
+          volume: isNaN(volume) ? 0 : volume,
+        });
+      }
+    }
+
+    candles.sort((a, b) => a.time - b.time);
+
+    return res.json({
+      symbol: symbolParam,
+      pair,
+      interval,
+      source: 'Kraken',
+      candles,
+    });
+  } catch (error: any) {
+    console.error('Kraken OHLC proxy error:', error);
+    return res.status(500).json({ error: error.message || 'Internal server error' });
+  }
+});
+
 // Serve frontend in dev (via Vite middleware) or in prod (via static dist)
 async function start() {
   if (process.env.NODE_ENV === 'production') {

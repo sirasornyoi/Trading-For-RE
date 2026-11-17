@@ -56,5 +56,11 @@
 - [done] Fixed `EntryTierChart.tsx` EMA visibility & Swing markers after chart rebuild (`indicatorsRef` + `chartVersion`), preserved zoom/pan across 5m refreshes and Volume/RSI pane toggles (`getVisibleLogicalRange`/`setVisibleLogicalRange`), and added dashed light-green `TP1` line + `✕` clear button (included in `"ลบเส้นทั้งหมด"`)
 - [done] Updated Entry Tiers RSI zone thresholds from 35/65 to 30/70 in `evaluateDailyRsi` (`src/services/entryTiers.ts`) and RSI pane shading (`src/components/EntryTierChart.tsx`), removed near-30/70 labels, and updated low-probe checklist text to `ราคาที่/ใกล้ Low + RSI Daily ใกล้ 30 (ดุลพินิจ)`
 
+## Crypto Data Source Migration · Binance (USDT) → Kraken (USD)
+- [done] Added `GET /api/kraken/ohlc` proxy in `server.ts` mapping `BTC/USD`→`XBTUSD`, `ETH/USD`→`ETHUSD`, `SOL/USD`→`SOLUSD` and returning `{ time, open, high, low, close, volume }` with Kraken error 502 handling
+- [done] Created `src/services/krakenData.ts` with `fetchKrakenKlines`, `subscribeKrakenOhlc` (`wss://ws.kraken.com/v2`), and one-time `migrateUsdtToUsdStorage` (`apextrade_migrated_usdt_to_usd_v1`)
+- [done] Switched crypto symbols (`BTC/USD`, `ETH/USD`, `SOL/USD`), defaults, data source labels (`Kraken`), and all Mode 1 + Mode 2 REST/WS/background monitors from Binance (`fetchBinanceKlines` removed) to Kraken
+
 ## Known Issues
 - None
+

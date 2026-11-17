@@ -7,7 +7,6 @@ import {
 } from './types/trading';
 import { 
   INITIAL_ASSETS, 
-  fetchBinanceKlines, 
   fetchSilverKlines,
   parseTradingViewCSV, 
   getStoredCandles, 
@@ -15,6 +14,11 @@ import {
   detectCandleTimeframe,
   aggregateDailyToWeekly,
 } from './services/marketData';
+import {
+  fetchKrakenKlines,
+  subscribeKrakenOhlc,
+  migrateUsdtToUsdStorage,
+} from './services/krakenData';
 import { soundService } from './services/sound';
 import { TopNav } from './components/TopNav';
 import { AssetSelector } from './components/AssetSelector';
@@ -31,8 +35,8 @@ import { UploadCloud, FileSpreadsheet, Trash2, CheckCircle, AlertCircle, Sparkle
 const ALERTS_STORAGE_KEY = 'apextrade_alerts_v2';
 const APP_MODE_STORAGE_KEY = 'apextrade_app_mode';
 
-function isBinanceSymbol(symbol: string): boolean {
-  return symbol === 'BTC/USDT' || symbol === 'ETH/USDT' || symbol === 'SOL/USDT';
+function isKrakenSymbol(symbol: string): boolean {
+  return symbol === 'BTC/USD' || symbol === 'ETH/USD' || symbol === 'SOL/USD';
 }
 
 function isYahooSymbol(symbol: string): boolean {
@@ -52,6 +56,9 @@ function formatCandleDate(timestampSec: number): string {
   const min = String(d.getMinutes()).padStart(2, '0');
   return `${yyyy}-${mm}-${dd} ${hh}:${min}`;
 }
+
+// Run one-time USDT -> USD localStorage migration before initializing state
+migrateUsdtToUsdStorage();
 
 export default function App() {
   const [activeView, setActiveView] = useState<'trade' | 'alerts' | 'calculator' | 'analysis'>('trade');
@@ -79,7 +86,7 @@ export default function App() {
     });
   });
 
-  const [selectedSymbol, setSelectedSymbol] = useState<string>('BTC/USDT');
+  const [selectedSymbol, setSelectedSymbol] = useState<string>('BTC/USD');
   const [timeframe, setTimeframe] = useState<Timeframe>('15m');
   const [candles, setCandles] = useState<Candle[]>([]);
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
@@ -137,8 +144,8 @@ export default function App() {
 
         try {
           let klines: Candle[] = [];
-          if (assetMeta.source === 'Binance') {
-            klines = await fetchBinanceKlines(assetMeta.symbol, conf.timeframe as Timeframe);
+          if (assetMeta.source === 'Kraken') {
+            klines = await fetchKrakenKlines(assetMeta.symbol, conf.timeframe as Timeframe);
           } else {
             const res = await fetch(`/api/klines?symbol=${encodeURIComponent(assetMeta.symbol)}&timeframe=${conf.timeframe}`);
             const data = await res.json();
@@ -209,11 +216,11 @@ export default function App() {
   }, []);
 
   const currentAsset = assets.find(a => a.symbol === selectedSymbol) || assets[0];
-  const isBinanceAsset = isBinanceSymbol(selectedSymbol);
+  const isKrakenAsset = isKrakenSymbol(selectedSymbol);
   const isYahooAsset = isYahooSymbol(selectedSymbol);
   const isGoldAsset = isGoldSymbol(selectedSymbol);
 
-  const isCsvDaily = !isBinanceAsset && !isYahooAsset && !!(currentAsset.csvTimeframe?.toLowerCase().includes('d') || currentAsset.csvTimeframe?.toLowerCase().includes('day') || currentAsset.csvTimeframe === '1D' || currentAsset.csvTimeframe === '1d');
+  const isCsvDaily = !isKrakenAsset && !isYahooAsset && !!(currentAsset.csvTimeframe?.toLowerCase().includes('d') || currentAsset.csvTimeframe?.toLowerCase().includes('day') || currentAsset.csvTimeframe === '1D' || currentAsset.csvTimeframe === '1d');
 
   const displayedCandles = useMemo(() => {
     if (isCsvDaily && isWeeklyView) {
@@ -313,7 +320,7 @@ export default function App() {
     delete lastChecked1mCandleTimeRef.current[selectedSymbol];
   }, [selectedSymbol]);
 
-  // Background 15s price alert checker for all non-selected assets with active alerts (Binance & Yahoo only)
+  // Background 15s price alert checker for all non-selected assets with active alerts (Kraken & Yahoo only)
   useEffect(() => {
     const checkBackgroundPriceAlerts = async () => {
       const currentAlerts = alertsRef.current;
@@ -322,27 +329,15 @@ export default function App() {
       for (const a of currentAlerts) {
         if (a.status !== 'active') continue;
         if (a.symbol === selectedSymbolRef.current) continue;
-        if (!isBinanceSymbol(a.symbol) && !isYahooSymbol(a.symbol)) continue;
+        if (!isKrakenSymbol(a.symbol) && !isYahooSymbol(a.symbol)) continue;
         activeSymbols.add(a.symbol);
       }
 
       for (const sym of activeSymbols) {
         try {
           let klines: Candle[] = [];
-          if (isBinanceSymbol(sym)) {
-            const cleanSymbol = sym.replace('/', '').toUpperCase();
-            const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${cleanSymbol}&interval=1m&limit=20`);
-            if (!res.ok) continue;
-            const data = await res.json();
-            if (!Array.isArray(data)) continue;
-            klines = data.map((item: (number | string)[]) => ({
-              time: Math.floor(Number(item[0]) / 1000),
-              open: parseFloat(item[1] as string),
-              high: parseFloat(item[2] as string),
-              low: parseFloat(item[3] as string),
-              close: parseFloat(item[4] as string),
-              volume: parseFloat(item[5] as string) || 0,
-            }));
+          if (isKrakenSymbol(sym)) {
+            klines = await fetchKrakenKlines(sym, '1m');
           } else if (isYahooSymbol(sym)) {
             const res = await fetch(`/api/klines?symbol=${encodeURIComponent(sym)}&timeframe=1m`);
             if (!res.ok) continue;
@@ -391,10 +386,10 @@ export default function App() {
     activeChartKeyRef.current = chartKey;
     setCandles([]);
 
-    if (isBinanceAsset) {
-      // Load real klines from Binance REST API for BTC, ETH, or SOL
+    if (isKrakenAsset) {
+      // Load real klines from Kraken REST API for BTC, ETH, or SOL
       let isMounted = true;
-      fetchBinanceKlines(selectedSymbol, timeframe)
+      fetchKrakenKlines(selectedSymbol, timeframe)
         .then(klineCandles => {
           if (!isMounted || activeChartKeyRef.current !== chartKey) return;
           if (klineCandles.length > 0) {
@@ -411,7 +406,7 @@ export default function App() {
                   price: last.close,
                   changeVsPrevCandle: Number(change.toFixed(2)),
                   lastCandleDate: lastDate,
-                  dataSource: 'Binance',
+                  dataSource: 'Kraken',
                 };
               }
               return a;
@@ -422,7 +417,7 @@ export default function App() {
           }
         })
         .catch(err => {
-          console.warn('Binance klines fetch failed:', err);
+          console.warn('Kraken klines fetch failed:', err);
         });
 
       return () => {
@@ -522,124 +517,89 @@ export default function App() {
         }));
       }
     }
-  }, [selectedSymbol, timeframe, isBinanceAsset, isYahooAsset, checkPriceAlerts]);
+  }, [selectedSymbol, timeframe, isKrakenAsset, isYahooAsset, checkPriceAlerts]);
 
-  // Real Binance @kline_<interval> WebSocket for BTC, ETH, and SOL real price updates
+  // Live Kraken WebSocket v2 OHLC stream for BTC/USD, ETH/USD, and SOL/USD
   useEffect(() => {
-    if (!isBinanceAsset || typeof window === 'undefined') {
+    if (!isKrakenAsset || typeof window === 'undefined') {
       if (!isYahooAsset) setIsLiveWs(false);
       return;
     }
 
-    let ws: WebSocket | null = null;
     const wsKey = `${selectedSymbol}|${timeframe}`;
     const wsSymbol = selectedSymbol;
-    const streamSymbol = selectedSymbol.replace('/', '').toLowerCase();
 
-    try {
-      ws = new WebSocket(`wss://stream.binance.com:9443/ws/${streamSymbol}@kline_${timeframe}`);
-      ws.onopen = () => {
+    const unsubscribe = subscribeKrakenOhlc(
+      wsSymbol,
+      timeframe,
+      (updatedCandle) => {
         if (activeChartKeyRef.current !== wsKey) return;
-        setIsLiveWs(true);
-      };
-      ws.onmessage = (event) => {
-        if (activeChartKeyRef.current !== wsKey) return;
-        try {
-          const data = JSON.parse(event.data);
-          if (data && data.k) {
-            const k = data.k;
-            const openTime = Math.floor(k.t / 1000);
-            const open = parseFloat(k.o);
-            const high = parseFloat(k.h);
-            const low = parseFloat(k.l);
-            const close = parseFloat(k.c);
-            const volume = parseFloat(k.v);
-            const isClosed = k.x === true;
 
-            if (!isNaN(close)) {
-              const formattedDate = formatCandleDate(openTime);
+        const formattedDate = formatCandleDate(updatedCandle.time);
+        checkPriceAlerts(wsSymbol, updatedCandle.close);
 
-              // Check alerts on real price updates
-              checkPriceAlerts(wsSymbol, close);
+        setCandles(prevCandles => {
+          if (prevCandles.length === 0) return prevCandles;
 
-              // Update candle series: update while open, append/finalize when closed
-              setCandles(prevCandles => {
-                if (prevCandles.length === 0) return prevCandles;
+          const lastIdx = prevCandles.length - 1;
+          const lastCandle = prevCandles[lastIdx];
 
-                const updatedCandle: Candle = {
-                  time: openTime,
-                  open,
-                  high,
-                  low,
-                  close,
-                  volume,
-                };
-
-                const lastIdx = prevCandles.length - 1;
-                const isSameAsLast = prevCandles[lastIdx].time === openTime;
-
-                // Calculate change vs previous candle from the last two candles
-                let changePct = 0;
-                if (isSameAsLast) {
-                  if (prevCandles.length > 1) {
-                    const prevC = prevCandles[prevCandles.length - 2];
-                    changePct = prevC.close > 0 ? ((close - prevC.close) / prevC.close) * 100 : 0;
-                  } else {
-                    changePct = open > 0 ? ((close - open) / open) * 100 : 0;
-                  }
-                } else {
-                  const prevC = prevCandles[lastIdx];
-                  changePct = prevC.close > 0 ? ((close - prevC.close) / prevC.close) * 100 : 0;
-                }
-
-                setAssets(prevAssets => prevAssets.map(a => {
-                  if (a.symbol === wsSymbol) {
-                    return {
-                      ...a,
-                      price: close,
-                      changeVsPrevCandle: Number(changePct.toFixed(2)),
-                      lastCandleDate: formattedDate,
-                      dataSource: 'Binance',
-                    };
-                  }
-                  return a;
-                }));
-
-                if (isClosed) {
-                  if (isSameAsLast) {
-                    return [...prevCandles.slice(0, lastIdx), updatedCandle];
-                  } else {
-                    return [...prevCandles, updatedCandle];
-                  }
-                } else {
-                  // Update the last candle while it is open
-                  if (isSameAsLast) {
-                    const copy = [...prevCandles];
-                    copy[lastIdx] = updatedCandle;
-                    return copy;
-                  } else {
-                    return [...prevCandles, updatedCandle];
-                  }
-                }
-              });
+          if (updatedCandle.time >= lastCandle.time) {
+            const isSameAsLast = lastCandle.time === updatedCandle.time;
+            let changePct = 0;
+            if (isSameAsLast) {
+              if (prevCandles.length > 1) {
+                const prevC = prevCandles[prevCandles.length - 2];
+                changePct = prevC.close > 0 ? ((updatedCandle.close - prevC.close) / prevC.close) * 100 : 0;
+              } else {
+                changePct = updatedCandle.open > 0 ? ((updatedCandle.close - updatedCandle.open) / updatedCandle.open) * 100 : 0;
+              }
+            } else {
+              changePct = lastCandle.close > 0 ? ((updatedCandle.close - lastCandle.close) / lastCandle.close) * 100 : 0;
             }
+
+            setAssets(prevAssets => prevAssets.map(a => {
+              if (a.symbol === wsSymbol) {
+                return {
+                  ...a,
+                  price: updatedCandle.close,
+                  changeVsPrevCandle: Number(changePct.toFixed(2)),
+                  lastCandleDate: formattedDate,
+                  dataSource: 'Kraken',
+                };
+              }
+              return a;
+            }));
+
+            if (isSameAsLast) {
+              const copy = [...prevCandles];
+              copy[lastIdx] = updatedCandle;
+              return copy;
+            }
+            return [...prevCandles, updatedCandle];
           }
-        } catch {}
-      };
-      ws.onerror = () => {
-        if (activeChartKeyRef.current === wsKey) setIsLiveWs(false);
-      };
-      ws.onclose = () => {
-        if (activeChartKeyRef.current === wsKey) setIsLiveWs(false);
-      };
-    } catch {
-      if (activeChartKeyRef.current === wsKey) setIsLiveWs(false);
-    }
+
+          // Update historical snapshot bar in-place if present
+          const matchIdx = prevCandles.findIndex(c => c.time === updatedCandle.time);
+          if (matchIdx !== -1) {
+            const copy = [...prevCandles];
+            copy[matchIdx] = updatedCandle;
+            return copy;
+          }
+          return prevCandles;
+        });
+      },
+      (connected) => {
+        if (activeChartKeyRef.current === wsKey) {
+          setIsLiveWs(connected);
+        }
+      }
+    );
 
     return () => {
-      if (ws) ws.close();
+      unsubscribe();
     };
-  }, [selectedSymbol, timeframe, isBinanceAsset, isYahooAsset, checkPriceAlerts]);
+  }, [selectedSymbol, timeframe, isKrakenAsset, isYahooAsset, checkPriceAlerts]);
 
   // Handle TradingView CSV File Upload
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -857,7 +817,7 @@ export default function App() {
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 min-h-[580px]">
             {/* Interactive Trading Chart (9 Cols on desktop) */}
             <div className="lg:col-span-9 h-[580px] lg:h-auto min-h-[520px]">
-              {(candles.length > 0 || isBinanceAsset || isYahooAsset) ? (
+              {(candles.length > 0 || isKrakenAsset || isYahooAsset) ? (
                 <TradingChart
                   candles={displayedCandles}
                   symbol={selectedSymbol}
@@ -872,7 +832,7 @@ export default function App() {
                     setIsAlertModalOpen(true);
                   }}
                   isLive={isLiveWs}
-                  isTimeframeDisabled={!isBinanceAsset && !isYahooAsset}
+                  isTimeframeDisabled={!isKrakenAsset && !isYahooAsset}
                   isWeeklyView={isWeeklyView}
                   onToggleWeeklyView={() => setIsWeeklyView(v => !v)}
                   canToggleWeeklyView={isCsvDaily}
@@ -954,7 +914,7 @@ export default function App() {
                       <div className="text-[11px] text-slate-400 font-sans mt-1">
                         Data as of {currentAsset.lastCandleDate || 'Live'}
                         {currentAsset.dataSource === 'CSV Upload' && currentAsset.csvTimeframe ? ` (TF: ${currentAsset.csvTimeframe})` : ''}
-                        {' — Source: '}{currentAsset.dataSource || 'Binance'}
+                        {' — Source: '}{currentAsset.dataSource || 'Kraken'}
                       </div>
                     </div>
                   ) : (
@@ -977,10 +937,10 @@ export default function App() {
                     <FileSpreadsheet className="w-4 h-4 text-amber-400" />
                     <span>แหล่งข้อมูลราคา (Data Source)</span>
                   </div>
-                  {isBinanceAsset ? (
+                  {isKrakenAsset ? (
                     <span className="text-[10px] font-mono text-emerald-400 flex items-center gap-1">
                       <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-                      Binance Live
+                      Kraken Live
                     </span>
                   ) : isYahooAsset ? (
                     <span className="text-[10px] font-mono text-emerald-400 flex items-center gap-1">
@@ -994,10 +954,10 @@ export default function App() {
                   )}
                 </div>
 
-                {isBinanceAsset ? (
+                {isKrakenAsset ? (
                   <div className="text-xs text-slate-400 space-y-2">
                     <p className="leading-relaxed">
-                      สินทรัพย์นี้ดึงข้อมูลแท่งเทียนจริงจาก Binance REST API และรับราคาแบบเรียลไทม์ผ่าน Binance WebSocket
+                      สินทรัพย์นี้ดึงข้อมูลแท่งเทียนจริงจาก Kraken REST API และรับราคาแบบเรียลไทม์ผ่าน Kraken WebSocket
                     </p>
                     <div className="text-[11px] text-slate-400 bg-slate-950 p-2 rounded-lg border border-slate-800">
                       สถานะ WebSocket: {isLiveWs ? <span className="text-emerald-400 font-semibold">กำลังเชื่อมต่อ (Connected)</span> : <span className="text-slate-400">รอการเชื่อมต่อ</span>}

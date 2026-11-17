@@ -11,7 +11,8 @@ import {
   formatDurationMs,
   hasMarketCloseSession,
 } from '../services/entryTiers';
-import { aggregateDailyToWeekly, fetchBinanceKlines } from '../services/marketData';
+import { aggregateDailyToWeekly } from '../services/marketData';
+import { fetchKrakenKlines } from '../services/krakenData';
 import { EntryTierChart, PricePickMode, TierChartTimeframe } from './EntryTierChart';
 import {
   CheckCircle2,
@@ -32,7 +33,7 @@ import {
 interface EntryTiersPanelProps {
   symbol: string;
   thaiName: string;
-  source: 'Binance' | 'Yahoo';
+  source: 'Kraken' | 'Yahoo';
   decimals: number;
   activeTier: ActiveTierId;
   tierState: TierTradeState;
@@ -117,8 +118,8 @@ export const EntryTiersPanel: React.FC<EntryTiersPanelProps> = ({
     const loadWeekly = async () => {
       try {
         let fetched: Candle[] = [];
-        if (source === 'Binance') {
-          fetched = await fetchBinanceKlines(reqSymbol, '1w');
+        if (source === 'Kraken') {
+          fetched = await fetchKrakenKlines(reqSymbol, '1w');
         } else {
           const res = await fetch(`/api/klines?symbol=${encodeURIComponent(reqSymbol)}&timeframe=1w`);
           if (res.ok) {

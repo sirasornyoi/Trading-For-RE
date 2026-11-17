@@ -19,7 +19,7 @@ import {
 } from '../services/entryTiers';
 import { EntryTiersPanel } from './EntryTiersPanel';
 import { Candle, Timeframe } from '../types/trading';
-import { fetchBinanceKlines } from '../services/marketData';
+import { fetchKrakenKlines } from '../services/krakenData';
 import {
   SlidersHorizontal,
   Bell,
@@ -102,7 +102,7 @@ class BreakoutScalpErrorBoundary extends React.Component<ErrorBoundaryProps, Err
 
 const BreakoutScalpInnerView: React.FC<BreakoutScalpViewProps> = ({ onTriggerAlert }) => {
   const [configs, setConfigs] = useState<Record<string, BreakoutScalpAssetConfig>>(() => loadScalpConfigs());
-  const [selectedSymbol, setSelectedSymbol] = useState<string>('BTC/USDT');
+  const [selectedSymbol, setSelectedSymbol] = useState<string>('BTC/USD');
   const [selectedTier, setSelectedTier] = useState<EntryTierId>(0);
   const [entryTiersState, setEntryTiersState] = useState<AssetTiersMap>(() =>
     loadEntryTiersState(SCALP_ASSETS.map(a => a.symbol))
@@ -119,7 +119,7 @@ const BreakoutScalpInnerView: React.FC<BreakoutScalpViewProps> = ({ onTriggerAle
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<number>(Date.now());
 
-  const currentConfig = configs[selectedSymbol] || configs['BTC/USDT'];
+  const currentConfig = configs[selectedSymbol] || configs['BTC/USD'];
 
   // Ref to track active request selection (symbol and timeframe) to drop stale async responses
   const activeSelectionRef = useRef<{ symbol: string; timeframe: '1m' | '5m' }>({
@@ -242,12 +242,12 @@ const BreakoutScalpInnerView: React.FC<BreakoutScalpViewProps> = ({ onTriggerAle
     if (!assetMeta) return;
 
     try {
-      if (assetMeta.source === 'Binance') {
+      if (assetMeta.source === 'Kraken') {
         const [ltf, h1, h4, d1] = await Promise.all([
-          fetchBinanceKlines(symbol, tf as Timeframe),
-          fetchBinanceKlines(symbol, '1h'),
-          fetchBinanceKlines(symbol, '4h'),
-          fetchBinanceKlines(symbol, '1d'),
+          fetchKrakenKlines(symbol, tf as Timeframe),
+          fetchKrakenKlines(symbol, '1h'),
+          fetchKrakenKlines(symbol, '4h'),
+          fetchKrakenKlines(symbol, '1d'),
         ]);
 
         // Discard stale responses if user switched symbol or timeframe
@@ -353,11 +353,11 @@ const BreakoutScalpInnerView: React.FC<BreakoutScalpViewProps> = ({ onTriggerAle
   }, [selectedSymbol, currentConfig.timeframe, fetchCandlesForAsset]);
 
   // Polling timers:
-  // LTF: Binance 10s, Yahoo 30s
+  // LTF: Kraken 10s, Yahoo 30s
   // HTF: 5 minutes (300s)
   useEffect(() => {
-    const isBinance = currentConfig.source === 'Binance';
-    const ltfIntervalMs = isBinance ? 10000 : 30000;
+    const isKraken = currentConfig.source === 'Kraken';
+    const ltfIntervalMs = isKraken ? 10000 : 30000;
 
     const ltfTimer = setInterval(() => {
       const reqSymbol = selectedSymbol;
@@ -365,8 +365,8 @@ const BreakoutScalpInnerView: React.FC<BreakoutScalpViewProps> = ({ onTriggerAle
 
       const fetchLTFOnly = async () => {
         try {
-          if (isBinance) {
-            const ltf = await fetchBinanceKlines(reqSymbol, reqTf as Timeframe);
+          if (isKraken) {
+            const ltf = await fetchKrakenKlines(reqSymbol, reqTf as Timeframe);
             if (
               activeSelectionRef.current.symbol === reqSymbol &&
               activeSelectionRef.current.timeframe === reqTf

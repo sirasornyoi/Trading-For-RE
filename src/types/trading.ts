@@ -15,7 +15,7 @@ export interface Asset {
   low24h?: number;
   volume24h?: string;
   lastCandleDate?: string;
-  dataSource?: 'Binance' | 'CSV Upload' | 'Yahoo Finance (COMEX)' | string | null;
+  dataSource?: 'Kraken' | 'CSV Upload' | 'Yahoo Finance (COMEX)' | string | null;
   csvTimeframe?: string;
 }
 

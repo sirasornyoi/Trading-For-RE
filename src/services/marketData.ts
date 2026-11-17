@@ -2,30 +2,30 @@ import { Asset, Candle, Timeframe } from '../types/trading';
 
 export const INITIAL_ASSETS: Asset[] = [
   {
-    symbol: 'BTC/USDT',
+    symbol: 'BTC/USD',
     name: 'Bitcoin',
     thaiName: 'บิตคอยน์',
     category: 'crypto',
     decimals: 2,
-    unit: 'USDT',
+    unit: 'USD',
     icon: '₿',
   },
   {
-    symbol: 'ETH/USDT',
+    symbol: 'ETH/USD',
     name: 'Ethereum',
     thaiName: 'อีเธอเรียม',
     category: 'crypto',
     decimals: 2,
-    unit: 'USDT',
+    unit: 'USD',
     icon: 'Ξ',
   },
   {
-    symbol: 'SOL/USDT',
+    symbol: 'SOL/USD',
     name: 'Solana',
     thaiName: 'โซลานา',
     category: 'crypto',
     decimals: 2,
-    unit: 'USDT',
+    unit: 'USD',
     icon: '◎',
   },
   {
@@ -147,28 +147,6 @@ export function aggregateDailyToWeekly(dailyCandles: Candle[]): Candle[] {
   return weeklyCandles.sort((a, b) => a.time - b.time);
 }
 
-// Fetch real historical klines from Binance REST API
-export async function fetchBinanceKlines(symbol: string, timeframe: Timeframe): Promise<Candle[]> {
-  const cleanSymbol = symbol.replace('/', '').toUpperCase();
-  const apiInterval = timeframe;
-  const limit = 1000;
-
-  const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${cleanSymbol}&interval=${apiInterval}&limit=${limit}`);
-  if (!res.ok) {
-    throw new Error(`Failed to fetch Binance klines: ${res.statusText}`);
-  }
-  const data = await res.json();
-  if (!Array.isArray(data)) return [];
-
-  return data.map((item: (number | string)[]) => ({
-    time: Math.floor(Number(item[0]) / 1000),
-    open: parseFloat(item[1] as string),
-    high: parseFloat(item[2] as string),
-    low: parseFloat(item[3] as string),
-    close: parseFloat(item[4] as string),
-    volume: parseFloat(item[5] as string) || 0,
-  }));
-}
 
 // Aggregate 1-hour candles into 4-hour candles (UTC 14400-second bucket)
 export function aggregateTo4h(h1Candles: Candle[]): Candle[] {

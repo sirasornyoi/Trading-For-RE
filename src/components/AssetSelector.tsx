@@ -52,7 +52,7 @@ export const AssetSelector: React.FC<AssetSelectorProps> = ({
           ))}
         </div>
         <div className="text-[11px] text-slate-400 hidden sm:block">
-          ข้อมูลจริงจาก Binance & CSV Upload
+          ข้อมูลจริงจาก Kraken & CSV Upload
         </div>
       </div>
 
@@ -113,7 +113,7 @@ export const AssetSelector: React.FC<AssetSelectorProps> = ({
                     <div className="text-[9.5px] text-slate-400 font-sans mt-0.5">
                       Data as of {asset.lastCandleDate || 'Live'}
                       {asset.dataSource === 'CSV Upload' && asset.csvTimeframe ? ` (${asset.csvTimeframe})` : ''}
-                      {' — Source: '}{asset.dataSource || 'Binance'}
+                      {' — Source: '}{asset.dataSource || 'Kraken'}
                     </div>
                   </>
                 ) : (
