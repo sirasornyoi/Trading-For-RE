@@ -46,6 +46,7 @@
 - [done] Restricted market close time input and near-market-close warnings to `XAU/USD` and `XAG/USD` (hidden for crypto assets)
 - [done] Added `src/components/EntryTierChart.tsx` with Daily/H4/H1/(Weekly in Tier 3) candlestick chart, `[ตั้ง Entry]`/`[ตั้ง SL]`/`[ตั้ง TP]` click-to-set via `coordinateToPrice`, Esc/cancel mode, horizontal `createPriceLine` overlays, and `decimals` rounding synced with inputs and `evaluateTierRR`
 - [done] Enhanced `EntryTierChart.tsx` with EMA20/50/100/200 (`calculateEMA`), Volume + MA20 with zero-volume notice, RSI 14 pane (`calculateRSI`) with 30/70 dashed lines, <=35/>=65 shading & Daily RSI header, 3-bar Swing High/Low markers, R/R shaded zones & distance labels, expanded legend, and separate localStorage indicator persistence
+- [done] Added per-field `✕` clear buttons next to Entry/SL/TP inputs in `EntryTiersPanel.tsx` and toolbar `"ลบเส้นทั้งหมด"` button in `EntryTierChart.tsx` (scoped strictly to the active tier)
 
 ## Known Issues
 - None

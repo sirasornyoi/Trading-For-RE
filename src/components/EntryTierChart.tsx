@@ -26,7 +26,7 @@ import {
 import { Candle } from '../types/trading';
 import { calculateEMA, calculateRSI } from '../services/marketData';
 import { DailyRsiEvaluation, TierRrEvaluation } from '../services/entryTiers';
-import { Crosshair, RefreshCw, X } from 'lucide-react';
+import { Crosshair, RefreshCw, Trash2, X } from 'lucide-react';
 
 export type TierChartTimeframe = '1w' | '1d' | '4h' | '1h';
 export type PricePickMode = 'entry' | 'sl' | 'tp' | null;
@@ -84,6 +84,7 @@ interface EntryTierChartProps {
   rrEval: TierRrEvaluation;
   dailyRsi: DailyRsiEvaluation;
   onPickPrice: (mode: Exclude<PricePickMode, null>, price: number) => void;
+  onClearAllLines: () => void;
   isLoading?: boolean;
 }
 
@@ -129,6 +130,7 @@ export const EntryTierChart: React.FC<EntryTierChartProps> = ({
   rrEval,
   dailyRsi,
   onPickPrice,
+  onClearAllLines,
   isLoading = false,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -948,6 +950,21 @@ export const EntryTierChart: React.FC<EntryTierChartProps> = ({
             <Crosshair className="w-3.5 h-3.5" />
             <span>ตั้ง TP</span>
           </button>
+
+          {(entryPrice !== null || stopPrice !== null || takeProfitPrice !== null) && (
+            <button
+              type="button"
+              onClick={() => {
+                onClearAllLines();
+                setPickMode(null);
+              }}
+              className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-rose-900/70 bg-rose-950/30 text-rose-400 hover:text-rose-300 hover:bg-rose-950/60 font-semibold text-[11px] transition-colors cursor-pointer"
+              title="ลบเส้นทั้งหมด"
+            >
+              <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+              <span>ลบเส้นทั้งหมด</span>
+            </button>
+          )}
 
           {pickMode !== null && (
             <button

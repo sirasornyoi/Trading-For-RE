@@ -162,6 +162,15 @@ export const EntryTiersPanel: React.FC<EntryTiersPanelProps> = ({
     }));
   };
 
+  const handleClearAllLines = () => {
+    onUpdateTierState(prev => ({
+      ...prev,
+      entryPrice: null,
+      stopPrice: null,
+      takeProfitPrice: null,
+    }));
+  };
+
   // Independent 1-second tick for the current tier's time stop display
   useEffect(() => {
     setNowMs(Date.now());
@@ -401,6 +410,7 @@ export const EntryTiersPanel: React.FC<EntryTiersPanelProps> = ({
             rrEval={rrEval}
             dailyRsi={dailyRsi}
             onPickPrice={handlePickPriceFromChart}
+            onClearAllLines={handleClearAllLines}
             isLoading={isCandlesLoading || (chartTf === '1w' && isWeeklyLoading)}
           />
 
@@ -525,47 +535,86 @@ export const EntryTiersPanel: React.FC<EntryTiersPanelProps> = ({
             <div className={`grid grid-cols-1 ${activeTier === 2 ? 'md:grid-cols-4' : 'md:grid-cols-3'} gap-3`}>
               <div>
                 <label className="block text-slate-400 font-semibold mb-1">ราคาเข้า (Entry)</label>
-                <input
-                  type="number"
-                  step="any"
-                  value={tierState.entryPrice ?? ''}
-                  placeholder="กรอกราคาเข้า"
-                  onChange={e => {
-                    const val = e.target.value === '' ? null : Number(e.target.value);
-                    onUpdateTierState(prev => ({ ...prev, entryPrice: val }));
-                  }}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 font-mono text-white text-xs focus:outline-none focus:border-amber-500"
-                />
+                <div className="flex items-center gap-1">
+                  <input
+                    type="number"
+                    step="any"
+                    value={tierState.entryPrice ?? ''}
+                    placeholder="กรอกราคาเข้า"
+                    onChange={e => {
+                      const val = e.target.value === '' ? null : Number(e.target.value);
+                      onUpdateTierState(prev => ({ ...prev, entryPrice: val }));
+                    }}
+                    className="w-full min-w-0 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 font-mono text-white text-xs focus:outline-none focus:border-amber-500"
+                  />
+                  {tierState.entryPrice !== null && (
+                    <button
+                      type="button"
+                      onClick={() => onUpdateTierState(prev => ({ ...prev, entryPrice: null }))}
+                      className="p-1.5 rounded-lg bg-slate-950 border border-slate-800 text-slate-400 hover:text-rose-400 hover:border-rose-900/70 transition-colors cursor-pointer shrink-0"
+                      title="ลบราคา Entry"
+                      aria-label="ลบราคา Entry"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
               </div>
 
               <div>
                 <label className="block text-slate-400 font-semibold mb-1">Hard SL</label>
-                <input
-                  type="number"
-                  step="any"
-                  value={tierState.stopPrice ?? ''}
-                  placeholder="กรอกราคา SL"
-                  onChange={e => {
-                    const val = e.target.value === '' ? null : Number(e.target.value);
-                    onUpdateTierState(prev => ({ ...prev, stopPrice: val }));
-                  }}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 font-mono text-white text-xs focus:outline-none focus:border-rose-500"
-                />
+                <div className="flex items-center gap-1">
+                  <input
+                    type="number"
+                    step="any"
+                    value={tierState.stopPrice ?? ''}
+                    placeholder="กรอกราคา SL"
+                    onChange={e => {
+                      const val = e.target.value === '' ? null : Number(e.target.value);
+                      onUpdateTierState(prev => ({ ...prev, stopPrice: val }));
+                    }}
+                    className="w-full min-w-0 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 font-mono text-white text-xs focus:outline-none focus:border-rose-500"
+                  />
+                  {tierState.stopPrice !== null && (
+                    <button
+                      type="button"
+                      onClick={() => onUpdateTierState(prev => ({ ...prev, stopPrice: null }))}
+                      className="p-1.5 rounded-lg bg-slate-950 border border-slate-800 text-slate-400 hover:text-rose-400 hover:border-rose-900/70 transition-colors cursor-pointer shrink-0"
+                      title="ลบราคา SL"
+                      aria-label="ลบราคา SL"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
               </div>
 
               <div>
                 <label className="block text-slate-400 font-semibold mb-1">เป้าหมายหลัก (TP)</label>
-                <input
-                  type="number"
-                  step="any"
-                  value={tierState.takeProfitPrice ?? ''}
-                  placeholder="กรอกราคา TP"
-                  onChange={e => {
-                    const val = e.target.value === '' ? null : Number(e.target.value);
-                    onUpdateTierState(prev => ({ ...prev, takeProfitPrice: val }));
-                  }}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 font-mono text-white text-xs focus:outline-none focus:border-emerald-500"
-                />
+                <div className="flex items-center gap-1">
+                  <input
+                    type="number"
+                    step="any"
+                    value={tierState.takeProfitPrice ?? ''}
+                    placeholder="กรอกราคา TP"
+                    onChange={e => {
+                      const val = e.target.value === '' ? null : Number(e.target.value);
+                      onUpdateTierState(prev => ({ ...prev, takeProfitPrice: val }));
+                    }}
+                    className="w-full min-w-0 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 font-mono text-white text-xs focus:outline-none focus:border-emerald-500"
+                  />
+                  {tierState.takeProfitPrice !== null && (
+                    <button
+                      type="button"
+                      onClick={() => onUpdateTierState(prev => ({ ...prev, takeProfitPrice: null }))}
+                      className="p-1.5 rounded-lg bg-slate-950 border border-slate-800 text-slate-400 hover:text-rose-400 hover:border-rose-900/70 transition-colors cursor-pointer shrink-0"
+                      title="ลบราคา TP"
+                      aria-label="ลบราคา TP"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
               </div>
 
               {activeTier === 2 && (
