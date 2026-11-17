@@ -43,6 +43,7 @@
 - [done] Integrated Entry Tiers selector bar (ระยะ 0 / 1 / 2 / 3) into `src/components/BreakoutScalpView.tsx` while keeping Tier 0 Breakout Scalp logic and Mode 1 untouched
 - [done] Updated tier upgrade to stop the previous tier's timer (`enteredAt = null`) and start the new tier's timer immediately (`enteredAt = Date.now()`)
 - [done] Restricted market close time input and near-market-close warnings to `XAU/USD` and `XAG/USD` (hidden for crypto assets)
+- [done] Added `src/components/EntryTierChart.tsx` with Daily/H4/H1/(Weekly in Tier 3) candlestick chart, `[ตั้ง Entry]`/`[ตั้ง SL]`/`[ตั้ง TP]` click-to-set via `coordinateToPrice`, Esc/cancel mode, horizontal `createPriceLine` overlays, and `decimals` rounding synced with inputs and `evaluateTierRR`
 
 ## Known Issues
 - None

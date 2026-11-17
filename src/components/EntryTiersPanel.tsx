@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Candle } from '../types/trading';
 import {
   ActiveTierId,
@@ -11,6 +11,8 @@ import {
   formatDurationMs,
   hasMarketCloseSession,
 } from '../services/entryTiers';
+import { aggregateDailyToWeekly, fetchBinanceKlines } from '../services/marketData';
+import { EntryTierChart, PricePickMode, TierChartTimeframe } from './EntryTierChart';
 import {
   CheckCircle2,
   XCircle,
@@ -30,11 +32,15 @@ import {
 interface EntryTiersPanelProps {
   symbol: string;
   thaiName: string;
+  source: 'Binance' | 'Yahoo';
   decimals: number;
   activeTier: ActiveTierId;
   tierState: TierTradeState;
   latestPrice: number | null;
+  h1Candles: Candle[];
+  h4Candles: Candle[];
   d1Candles: Candle[];
+  isCandlesLoading?: boolean;
   onUpdateTierState: (updater: (prev: TierTradeState) => TierTradeState) => void;
   onUpgradeTier: (fromTier: ActiveTierId, toTier: ActiveTierId) => void;
 }
@@ -60,16 +66,101 @@ const TIER_META: Record<ActiveTierId, { name: string; subtitle: string; tfRule: 
 export const EntryTiersPanel: React.FC<EntryTiersPanelProps> = ({
   symbol,
   thaiName,
+  source,
   decimals,
   activeTier,
   tierState,
   latestPrice,
+  h1Candles,
+  h4Candles,
   d1Candles,
+  isCandlesLoading = false,
   onUpdateTierState,
   onUpgradeTier,
 }) => {
   const [signalInput, setSignalInput] = useState('');
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
+  const [chartTf, setChartTf] = useState<TierChartTimeframe>('1d');
+  const [w1Candles, setW1Candles] = useState<Candle[]>([]);
+  const [isWeeklyLoading, setIsWeeklyLoading] = useState<boolean>(false);
+
+  const activeChartRequestRef = useRef<{ symbol: string; chartTf: TierChartTimeframe }>({
+    symbol,
+    chartTf,
+  });
+  activeChartRequestRef.current = { symbol, chartTf };
+
+  // Available chart timeframes: Daily / H4 / H1 (Tier 3 adds Weekly)
+  const availableTimeframes = useMemo<TierChartTimeframe[]>(
+    () => (activeTier === 3 ? ['1w', '1d', '4h', '1h'] : ['1d', '4h', '1h']),
+    [activeTier]
+  );
+
+  // If leaving Tier 3 while on '1w', reset to '1d'
+  useEffect(() => {
+    if (activeTier !== 3 && chartTf === '1w') {
+      setChartTf('1d');
+    }
+  }, [activeTier, chartTf]);
+
+  // Clear Weekly candles immediately when symbol changes
+  useEffect(() => {
+    setW1Candles([]);
+  }, [symbol]);
+
+  // Fetch Weekly candles when Tier 3 selects Weekly chart TF
+  useEffect(() => {
+    if (activeTier !== 3 || chartTf !== '1w') return;
+    const reqSymbol = symbol;
+    setIsWeeklyLoading(true);
+
+    const loadWeekly = async () => {
+      try {
+        let fetched: Candle[] = [];
+        if (source === 'Binance') {
+          fetched = await fetchBinanceKlines(reqSymbol, '1w');
+        } else {
+          const res = await fetch(`/api/klines?symbol=${encodeURIComponent(reqSymbol)}&timeframe=1w`);
+          if (res.ok) {
+            const data = await res.json();
+            fetched = data.candles || [];
+          }
+        }
+        if (activeChartRequestRef.current.symbol !== reqSymbol) return;
+        if (fetched.length > 0) {
+          setW1Candles(fetched);
+        } else {
+          setW1Candles(aggregateDailyToWeekly(d1Candles));
+        }
+      } catch {
+        if (activeChartRequestRef.current.symbol !== reqSymbol) return;
+        setW1Candles(aggregateDailyToWeekly(d1Candles));
+      } finally {
+        if (activeChartRequestRef.current.symbol === reqSymbol) {
+          setIsWeeklyLoading(false);
+        }
+      }
+    };
+
+    loadWeekly();
+  }, [activeTier, chartTf, symbol, source, d1Candles]);
+
+  const activeChartCandles = useMemo(() => {
+    if (chartTf === '1w') return w1Candles.length > 0 ? w1Candles : aggregateDailyToWeekly(d1Candles);
+    if (chartTf === '1d') return d1Candles;
+    if (chartTf === '4h') return h4Candles;
+    return h1Candles;
+  }, [chartTf, w1Candles, d1Candles, h4Candles, h1Candles]);
+
+  const handlePickPriceFromChart = (mode: Exclude<PricePickMode, null>, price: number) => {
+    const rounded = Number(price.toFixed(decimals));
+    onUpdateTierState(prev => ({
+      ...prev,
+      entryPrice: mode === 'entry' ? rounded : prev.entryPrice,
+      stopPrice: mode === 'sl' ? rounded : prev.stopPrice,
+      takeProfitPrice: mode === 'tp' ? rounded : prev.takeProfitPrice,
+    }));
+  };
 
   // Independent 1-second tick for the current tier's time stop display
   useEffect(() => {
@@ -292,10 +383,25 @@ export const EntryTiersPanel: React.FC<EntryTiersPanelProps> = ({
         )}
       </div>
 
-      {/* Main 2-column Grid: Left = Inputs & Time Stop, Right = Checklist & Upgrade */}
+      {/* Main 2-column Grid: Left = Chart, Inputs & Time Stop, Right = Checklist & Upgrade */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-        {/* Left Column (7 cols): Signals, Entry/SL/TP + Auto R/R, Independent Time Stop */}
+        {/* Left Column (7 cols): Candlestick Chart, Signals, Entry/SL/TP + Auto R/R, Independent Time Stop */}
         <div className="lg:col-span-7 space-y-4">
+          {/* Interactive Candlestick Chart for Setting Entry / SL / TP */}
+          <EntryTierChart
+            symbol={symbol}
+            decimals={decimals}
+            candles={activeChartCandles}
+            timeframe={chartTf}
+            availableTimeframes={availableTimeframes}
+            onTimeframeChange={setChartTf}
+            entryPrice={tierState.entryPrice}
+            stopPrice={tierState.stopPrice}
+            takeProfitPrice={tierState.takeProfitPrice}
+            onPickPrice={handlePickPriceFromChart}
+            isLoading={isCandlesLoading || (chartTf === '1w' && isWeeklyLoading)}
+          />
+
           {/* Signals Used Card */}
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-lg space-y-3">
             <div className="flex items-center justify-between border-b border-slate-800 pb-2">

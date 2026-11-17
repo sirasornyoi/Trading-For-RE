@@ -670,11 +670,15 @@ const BreakoutScalpInnerView: React.FC<BreakoutScalpViewProps> = ({ onTriggerAle
         <EntryTiersPanel
           symbol={selectedSymbol}
           thaiName={currentConfig.thaiName}
+          source={currentConfig.source}
           decimals={currentConfig.decimals}
           activeTier={selectedTier as ActiveTierId}
           tierState={entryTiersState[selectedSymbol][selectedTier as ActiveTierId]}
           latestPrice={lastClosedCandle ? lastClosedCandle.close : null}
+          h1Candles={h1Candles}
+          h4Candles={h4Candles}
           d1Candles={d1Candles}
+          isCandlesLoading={isLoading}
           onUpdateTierState={updater => updateActiveTierState(selectedTier as ActiveTierId, updater)}
           onUpgradeTier={handleUpgradeTier}
         />
